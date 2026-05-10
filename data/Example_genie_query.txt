@@ -1,0 +1,7 @@
+1. Retrieve customer that saved at least 2 properties in the past 7 days. Find the last 2 properties they saved and last 2 properties they viewed.
+
+2. Retrieve the last 4 saved or viewed properties in the past 7 days for each customer. Deduplicate between saved and viewed list giving saved higher priority. If there are overlaps, keep properties in saved and continue searching for viewed to fill the list. Label each property with their action type.
+
+3. Retrieve customers that registered for any auction events in the past 7 days. Get top 2 properties for those events.
+
+4. Get 4 least engaged (save or view) properties for the upcoming auction events.
