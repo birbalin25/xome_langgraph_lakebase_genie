@@ -32,7 +32,10 @@ interface UserState {
   pastEmails: PastEmail[];
   generating: boolean;
   saving: boolean;
-  savedPath: string;
+  savedMessage: string;
+  savingDraft: boolean;
+  savedDraftMessage: string;
+  selectedSavedEmailId: number | null;
   collapsed: boolean;
   loading: boolean;
   error: string;
@@ -49,7 +52,10 @@ function makeInitialUserState(userId: string): UserState {
     pastEmails: [],
     generating: false,
     saving: false,
-    savedPath: "",
+    savedMessage: "",
+    savingDraft: false,
+    savedDraftMessage: "",
+    selectedSavedEmailId: null,
     collapsed: false,
     loading: true,
     error: "",
@@ -142,7 +148,7 @@ export default function GenieMultiUserDetail({
       const selectedProps = u.properties.filter((p) =>
         u.selectedPropertyIds.has(p.property_id)
       );
-      updateUser(idx, { generating: true, savedPath: "" });
+      updateUser(idx, { generating: true, savedMessage: "", savedDraftMessage: "" });
       try {
         const recentPast = u.pastEmails.length > 0
           ? { subject: u.pastEmails[0].subject, plain_text: u.pastEmails[0].plain_text, saved_at: u.pastEmails[0].saved_at }
@@ -186,7 +192,57 @@ export default function GenieMultiUserDetail({
         const result = await api.saveEmail({
           user_id: u.userId,
           subject: u.email.subject,
-          html: u.email.html,
+          plain_text: u.email.plain_text,
+          properties: selectedProps.map((p) => ({
+            property_id: p.property_id,
+            recommendation_id: p.recommendation_id,
+          })),
+          saved_email_id: u.selectedSavedEmailId || undefined,
+        });
+        const today = new Date().toISOString().split("T")[0];
+        const sentDraftId = u.selectedSavedEmailId;
+        updateUser(idx, (prev) => ({
+          saving: false,
+          savedMessage: result.message,
+          selectedSavedEmailId: null,
+          // Optimistically remove the sent draft from the dropdown immediately
+          pastEmails: sentDraftId
+            ? prev.pastEmails.filter((pe) => pe.email_id !== sentDraftId)
+            : prev.pastEmails,
+          properties: prev.properties.map((p) =>
+            prev.selectedPropertyIds.has(p.property_id)
+              ? { ...p, campaign_sent_date: p.campaign_sent_date ?? today }
+              : p
+          ),
+        }));
+        // Re-fetch in background for canonical state
+        api
+          .fetchPastEmails(
+            u.userId,
+            selectedProps.map((p) => p.property_id)
+          )
+          .then((pastEmails) => updateUser(idx, { pastEmails }))
+          .catch(() => {});
+      } catch (err) {
+        console.error("Failed to save email", err);
+        updateUser(idx, { saving: false });
+      }
+    },
+    [users, updateUser]
+  );
+
+  const handleSaveDraft = useCallback(
+    async (idx: number) => {
+      const u = users[idx];
+      if (!u || !u.email) return;
+      const selectedProps = u.properties.filter((p) =>
+        u.selectedPropertyIds.has(p.property_id)
+      );
+      updateUser(idx, { savingDraft: true });
+      try {
+        const result = await api.saveDraft({
+          user_id: u.userId,
+          subject: u.email.subject,
           plain_text: u.email.plain_text,
           properties: selectedProps.map((p) => ({
             property_id: p.property_id,
@@ -195,17 +251,25 @@ export default function GenieMultiUserDetail({
         });
         const today = new Date().toISOString().split("T")[0];
         updateUser(idx, (prev) => ({
-          saving: false,
-          savedPath: result.path,
+          savingDraft: false,
+          savedDraftMessage: result.message,
           properties: prev.properties.map((p) =>
             prev.selectedPropertyIds.has(p.property_id)
-              ? { ...p, campaign_sent_date: p.campaign_sent_date ?? today }
+              ? { ...p, campaign_saved_date: p.campaign_saved_date ?? today }
               : p
           ),
         }));
+        // Re-fetch past emails so dropdown updates in real time
+        api
+          .fetchPastEmails(
+            u.userId,
+            selectedProps.map((p) => p.property_id)
+          )
+          .then((pastEmails) => updateUser(idx, { pastEmails }))
+          .catch(() => {});
       } catch (err) {
-        console.error("Failed to save email", err);
-        updateUser(idx, { saving: false });
+        console.error("Failed to save draft", err);
+        updateUser(idx, { savingDraft: false });
       }
     },
     [users, updateUser]
@@ -242,6 +306,41 @@ export default function GenieMultiUserDetail({
       });
     },
     [updateUser]
+  );
+
+  const handleSelectPastEmail = useCallback(
+    (idx: number, emailId: number | null) => {
+      updateUser(idx, { selectedSavedEmailId: emailId });
+    },
+    [updateUser]
+  );
+
+  const handleDeleteSavedEmail = useCallback(
+    async (idx: number, emailId: number) => {
+      const u = users[idx];
+      if (!u) return;
+      // Optimistically remove from dropdown immediately
+      updateUser(idx, (prev) => ({
+        pastEmails: prev.pastEmails.filter((pe) => pe.email_id !== emailId),
+      }));
+      try {
+        await api.deleteSavedEmail(u.userId, emailId);
+        const selectedProps = u.properties.filter((p) =>
+          u.selectedPropertyIds.has(p.property_id)
+        );
+        // Re-fetch in background for canonical state
+        api
+          .fetchPastEmails(
+            u.userId,
+            selectedProps.map((p) => p.property_id)
+          )
+          .then((pastEmails) => updateUser(idx, { pastEmails }))
+          .catch(() => {});
+      } catch (err) {
+        console.error("Failed to delete saved email", err);
+      }
+    },
+    [users, updateUser]
   );
 
   const toggleCollapse = useCallback(
@@ -379,9 +478,12 @@ export default function GenieMultiUserDetail({
                         email={u.email}
                         onGenerate={() => handleGenerateEmail(idx)}
                         onSave={() => handleSaveEmail(idx)}
+                        onSaveDraft={() => handleSaveDraft(idx)}
                         generating={u.generating}
                         saving={u.saving}
-                        savedPath={u.savedPath}
+                        savedMessage={u.savedMessage}
+                        savingDraft={u.savingDraft}
+                        savedDraftMessage={u.savedDraftMessage}
                       />
                       <EmailPreview
                         email={u.email}
@@ -396,6 +498,12 @@ export default function GenieMultiUserDetail({
                         }
                         onUpdateSubject={(subject) =>
                           handleUpdateSubject(idx, subject)
+                        }
+                        onSelectPastEmail={(emailId) =>
+                          handleSelectPastEmail(idx, emailId)
+                        }
+                        onDeleteSavedEmail={(emailId) =>
+                          handleDeleteSavedEmail(idx, emailId)
                         }
                       />
                     </div>

@@ -117,14 +117,40 @@ export async function refineEmail(
 export async function saveEmail(payload: {
   user_id: string;
   subject: string;
-  html: string;
   plain_text: string;
   properties: Array<{ property_id: string; recommendation_id?: string }>;
-}): Promise<{ path: string; filename: string }> {
+  saved_email_id?: number;
+}): Promise<{ message: string }> {
   const res = await fetch(`${BASE}/save-email`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+  });
+  return json(res);
+}
+
+export async function saveDraft(payload: {
+  user_id: string;
+  subject: string;
+  plain_text: string;
+  properties: Array<{ property_id: string; recommendation_id?: string }>;
+}): Promise<{ message: string }> {
+  const res = await fetch(`${BASE}/save-draft`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return json(res);
+}
+
+export async function deleteSavedEmail(
+  userId: string,
+  emailId: number
+): Promise<{ success: boolean }> {
+  const res = await fetch(`${BASE}/delete-saved-email`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_id: userId, email_id: emailId }),
   });
   return json(res);
 }

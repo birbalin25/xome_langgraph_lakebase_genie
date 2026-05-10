@@ -1,4 +1,4 @@
-import { Send, Mail, Loader2, Check } from "lucide-react";
+import { Send, Mail, Loader2, Check, Save } from "lucide-react";
 import type { GeneratedEmail } from "../../types";
 
 interface EmailActionsProps {
@@ -7,9 +7,12 @@ interface EmailActionsProps {
   email: GeneratedEmail | null;
   onGenerate: () => void;
   onSave: () => void;
+  onSaveDraft: () => void;
   generating: boolean;
   saving: boolean;
-  savedPath: string;
+  savedMessage: string;
+  savingDraft: boolean;
+  savedDraftMessage: string;
 }
 
 export default function EmailActions({
@@ -18,9 +21,12 @@ export default function EmailActions({
   email,
   onGenerate,
   onSave,
+  onSaveDraft,
   generating,
   saving,
-  savedPath,
+  savedMessage,
+  savingDraft,
+  savedDraftMessage,
 }: EmailActionsProps) {
   return (
     <div className="flex flex-wrap items-center gap-3">
@@ -38,23 +44,43 @@ export default function EmailActions({
       </button>
 
       <button
+        onClick={onSaveDraft}
+        disabled={!email || savingDraft}
+        className="flex items-center gap-2 rounded-md border border-gray-300 bg-white px-5 py-2.5 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:opacity-50"
+      >
+        {savingDraft ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : savedDraftMessage ? (
+          <Check className="h-4 w-4 text-green-600" />
+        ) : (
+          <Save className="h-4 w-4" />
+        )}
+        {savingDraft ? "Saving..." : savedDraftMessage ? "Saved" : "Save Email"}
+      </button>
+
+      <button
         onClick={onSave}
         disabled={!email || saving}
         className="flex items-center gap-2 rounded-md border border-gray-300 bg-white px-5 py-2.5 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:opacity-50"
       >
         {saving ? (
           <Loader2 className="h-4 w-4 animate-spin" />
-        ) : savedPath ? (
+        ) : savedMessage ? (
           <Check className="h-4 w-4 text-green-600" />
         ) : (
           <Send className="h-4 w-4" />
         )}
-        {saving ? "Sending..." : savedPath ? "Sent" : "Send Email"}
+        {saving ? "Sending..." : savedMessage ? "Sent" : "Send Email"}
       </button>
 
-      {savedPath && (
-        <span className="text-xs text-gray-500">
-          Sent: <code className="rounded bg-gray-100 px-1.5 py-0.5">{savedPath}</code>
+      {savedDraftMessage && (
+        <span className="text-xs text-green-600 font-medium">
+          {savedDraftMessage}
+        </span>
+      )}
+      {savedMessage && (
+        <span className="text-xs text-green-600 font-medium">
+          {savedMessage}
         </span>
       )}
     </div>

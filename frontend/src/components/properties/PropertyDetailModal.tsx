@@ -149,6 +149,15 @@ export default function PropertyDetailModal({ property: p, onClose }: PropertyDe
             </div>
           )}
 
+          {/* Email saved banner */}
+          {p.campaign_saved_date && !p.campaign_sent_date && (
+            <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <p className="text-sm font-semibold text-amber-700">
+                Email saved on {formatDate(p.campaign_saved_date)}
+              </p>
+            </div>
+          )}
+
           {/* Description */}
           {p.description && (
             <div className="mt-4">

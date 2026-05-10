@@ -71,6 +71,7 @@ Browser → FastAPI (port 8000) → serves frontend/dist/ (static) + REST API (/
 - Lakebase helper (psycopg2): `agent_server/tools.py`
 - Config constants: `agent_server/config.py`
 - Prompts: `agent_server/prompts.py`
+- Refine email prompts: `agent_server/refine_email_prompts.py`
 - Server entry point: `agent_server/start_server.py`
 - Frontend (React): `frontend/`
 - Frontend components: `frontend/src/components/`
@@ -98,7 +99,15 @@ Browser → FastAPI (port 8000) → serves frontend/dist/ (static) + REST API (/
 
 **MLflow tracing** — `start_server.py` calls `mlflow.langchain.autolog()` on experiment `/Shared/xome-lakebase-campaign-tracing`. All LangGraph invocations are traced automatically. Additionally, `@mlflow.trace` decorators on `enrich_context` (span_type=tool), `generate_email` (span_type=chain), and `query_genie_node` (span_type=tool) in `graph_nodes.py` capture per-node input/output as child spans within each trace.
 
-**Startup table creation** — FastAPI lifespan hook in `start_server.py` auto-creates `campaign_tracking` and `campaign_emails` tables via `CREATE TABLE IF NOT EXISTS`.
+**Startup table creation & migrations** — FastAPI lifespan hook in `start_server.py` auto-creates `campaign_tracking` and `campaign_emails` tables via `CREATE TABLE IF NOT EXISTS`, then runs incremental schema migrations (add columns, rename columns, drop columns) wrapped in individual try/except blocks so each migration is idempotent.
+
+**Draft accumulation** — Each "Save Email" creates a new row in `campaign_emails` with `email_type='saved'`. Drafts are never overwritten; multiple drafts for the same user/properties can coexist. Users manually delete old drafts via the Delete button.
+
+**Soft-delete** — Deleted saved emails set `saved_email_delete_date = NOW()` rather than physically removing the row. The `/past-emails` query filters out rows where `saved_email_delete_date IS NOT NULL`.
+
+**Draft-to-sent tracking** — When a user sends a specific saved draft (selected via the dropdown), the backend sets `draft_sent_date = NOW()` on that draft row. The `/past-emails` query excludes saved emails where `draft_sent_date IS NOT NULL`, so sent drafts disappear from the dropdown.
+
+**Optimistic UI updates** — After sending a selected draft or deleting a saved email, the frontend immediately removes it from the local `pastEmails` state before the background re-fetch completes, ensuring the dropdown updates instantly.
 
 **Frontend state management** — React hooks only (useState, useCallback, useEffect). No Redux/Zustand. `AppShell.tsx` is the main orchestrator holding Genie results, filter state, and view state.
 
@@ -106,12 +115,18 @@ Browser → FastAPI (port 8000) → serves frontend/dist/ (static) + REST API (/
 
 **Genie search bar query retention** — After a Genie query completes, the submitted query text is displayed as placeholder text in the search input (replacing the default placeholder), so the user can see what they last searched for.
 
+**Multi-user detail view** — `GenieMultiUserDetail.tsx` renders multiple users in collapsible sections, each with their own profile, property grid, email generation, and save/send controls. All users' data loads in parallel.
+
+**Refine with AI** — In the plain text editor, users can click "Refine with AI" to open a prompt bar. The prompt + current email text are sent to the LLM via `/refine-email`, which returns an updated subject and plain text. Previous email context is included for continuity.
+
 ## Critical Rules
 
 - Campaign email properties come ONLY from the `recommendations` table. Browsing data is for personalization context only.
 - Frontend must be built (`cd frontend && npm run build`) before deploying — `frontend/dist/` is served as static files.
 - `.gitignore` has `!frontend/dist/` exception to include the built frontend in bundle deploy.
 - `.databricksignore` excludes `notebooks/`, `frontend/src/`, `node_modules/` etc. from the deploy bundle — only `frontend/dist/` and backend code are deployed.
+- Only `plain_text` and `subject` are persisted to `campaign_emails`. HTML content is not stored in the database.
+- Lakebase table ownership may differ from the app's service principal. Schema migrations that require owner privileges (e.g., `ALTER TABLE ADD COLUMN` on tables created by a different user) will fail silently. INSERT statements must only reference columns that exist in the original `CREATE TABLE` schema.
 
 ## Data Model
 
@@ -121,8 +136,8 @@ Six tables in Lakebase (PostgreSQL). First four seeded by notebooks, last two au
 - `properties` (1,000 rows) — listings with details (price, beds, baths, sqft, neighborhood, school rating, auction info)
 - `browsing_activity` (10,000 rows) — user browsing events linked to properties
 - `recommendations` (5,000 rows) — ML-scored property recommendations per user (`recommendation_score` 0.0–1.0)
-- `campaign_tracking` — records which emails were sent for which user+property+recommendation
-- `campaign_emails` — saved email content (subject, html_body, plain_text, filename)
+- `campaign_tracking` — records which emails were sent/saved for which user+property+recommendation (`campaign_status`: true=sent, false=saved)
+- `campaign_emails` — saved email content (subject, plain_text) with lifecycle columns: `email_type` ('sent'/'saved'), `email_sent_date`, `email_saved_date`, `draft_sent_date`, `saved_email_delete_date`
 
 ## REST API Endpoints
 
@@ -133,8 +148,12 @@ Six tables in Lakebase (PostgreSQL). First four seeded by notebooks, last two au
 | `GET` | `/api/campaign/properties/{id}` | Full property details by ID |
 | `GET` | `/api/campaign/users/{id}/profile` | Full user profile |
 | `POST` | `/api/campaign/users/{id}/listings` | Top recommended properties for a user |
+| `POST` | `/api/campaign/users/{id}/past-emails` | Recent sent/saved emails for user+properties |
 | `POST` | `/api/campaign/generate-email` | Generate email via LangGraph (source=dashboard) |
-| `POST` | `/api/campaign/save-email` | Save email to Lakebase |
+| `POST` | `/api/campaign/save-email` | Send email — persists to Lakebase, tracks campaign |
+| `POST` | `/api/campaign/save-draft` | Save draft — persists without marking as sent |
+| `POST` | `/api/campaign/delete-saved-email` | Soft-delete a saved email |
+| `POST` | `/api/campaign/refine-email` | Refine email subject + plain text via LLM |
 
 ## Configuration
 

@@ -2,7 +2,6 @@
 
 import logging
 import re
-from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -51,9 +50,15 @@ class PastEmailsRequest(BaseModel):
 class SaveEmailRequest(BaseModel):
     user_id: str
     subject: str
-    html: str
+    html: Optional[str] = None
     plain_text: str
     properties: list[dict] = []
+    saved_email_id: Optional[int] = None
+
+
+class DeleteSavedEmailRequest(BaseModel):
+    user_id: str
+    email_id: int
 
 
 class RefineEmailRequest(BaseModel):
@@ -208,7 +213,8 @@ def _fetch_listings_model_a(
            p.listing_status, p.days_on_market,
            p.auction_date, p.auction_start_price,
            p.hoa_fee, p.description, p.image_url,
-           ct.campaign_sent_date
+           ct.campaign_sent_date,
+           ct_saved.campaign_saved_date
     FROM recommendations r
     JOIN properties p ON r.property_id = p.property_id
     LEFT JOIN (
@@ -219,6 +225,14 @@ def _fetch_listings_model_a(
     ) ct
         ON ct.user_id = r.user_id
         AND ct.property_id = p.property_id
+    LEFT JOIN (
+        SELECT user_id, property_id, MAX(campaign_date) AS campaign_saved_date
+        FROM campaign_tracking
+        WHERE campaign_status = false
+        GROUP BY user_id, property_id
+    ) ct_saved
+        ON ct_saved.user_id = r.user_id
+        AND ct_saved.property_id = p.property_id
     WHERE {where_str}
     ORDER BY r.recommendation_score DESC
     LIMIT {min(max(listing_count, 1), 30)}
@@ -246,7 +260,8 @@ def _fetch_listings_model_b(
            p.listing_status, p.days_on_market,
            p.auction_date, p.auction_start_price,
            p.hoa_fee, p.description, p.image_url,
-           ct.campaign_sent_date
+           ct.campaign_sent_date,
+           ct_saved.campaign_saved_date
     FROM recommendations r
     JOIN properties p ON r.property_id = p.property_id
     LEFT JOIN (
@@ -257,6 +272,14 @@ def _fetch_listings_model_b(
     ) ct
         ON ct.user_id = r.user_id
         AND ct.property_id = p.property_id
+    LEFT JOIN (
+        SELECT user_id, property_id, MAX(campaign_date) AS campaign_saved_date
+        FROM campaign_tracking
+        WHERE campaign_status = false
+        GROUP BY user_id, property_id
+    ) ct_saved
+        ON ct_saved.user_id = r.user_id
+        AND ct_saved.property_id = p.property_id
     WHERE {where_str}
     ORDER BY r.recommendation_score DESC
     LIMIT {min(max(listing_count, 1), 30)}
@@ -284,7 +307,8 @@ def _fetch_listings_on_the_fly(
            p.listing_status, p.days_on_market,
            p.auction_date, p.auction_start_price,
            p.hoa_fee, p.description, p.image_url,
-           ct.campaign_sent_date
+           ct.campaign_sent_date,
+           ct_saved.campaign_saved_date
     FROM recommendations r
     JOIN properties p ON r.property_id = p.property_id
     LEFT JOIN (
@@ -295,6 +319,14 @@ def _fetch_listings_on_the_fly(
     ) ct
         ON ct.user_id = r.user_id
         AND ct.property_id = p.property_id
+    LEFT JOIN (
+        SELECT user_id, property_id, MAX(campaign_date) AS campaign_saved_date
+        FROM campaign_tracking
+        WHERE campaign_status = false
+        GROUP BY user_id, property_id
+    ) ct_saved
+        ON ct_saved.user_id = r.user_id
+        AND ct_saved.property_id = p.property_id
     WHERE {where_str}
     ORDER BY r.recommendation_score DESC
     LIMIT {min(max(listing_count, 1), 30)}
@@ -331,22 +363,29 @@ async def get_past_emails(user_id: str, req: PastEmailsRequest):
 
         escaped_ids = ", ".join(f"'{pid}'" for pid in req.property_ids)
         query = f"""
-        SELECT DISTINCT ce.saved_at, ce.subject, ce.plain_text
+        SELECT DISTINCT
+            ce.id AS email_id,
+            COALESCE(ce.email_sent_date, ce.email_saved_date) AS ts,
+            ce.subject, ce.plain_text, ce.email_type
         FROM campaign_emails ce
         JOIN campaign_tracking ct
             ON ct.user_id = ce.user_id
-            AND ct.campaign_date = ce.saved_at::date
+            AND ct.campaign_date = COALESCE(ce.email_sent_date, ce.email_saved_date)::date
         WHERE ce.user_id = '{user_id}'
             AND ct.property_id IN ({escaped_ids})
-        ORDER BY ce.saved_at DESC
+            AND (ce.email_type = 'sent' OR (ce.email_type = 'saved' AND ce.draft_sent_date IS NULL))
+            AND ce.saved_email_delete_date IS NULL
+        ORDER BY COALESCE(ce.email_sent_date, ce.email_saved_date) DESC
         LIMIT 5
         """
         rows = _execute_sql(query)
         emails = [
             {
-                "saved_at": str(r["saved_at"]),
+                "email_id": r.get("email_id"),
+                "saved_at": str(r["ts"]),
                 "subject": r["subject"],
                 "plain_text": r["plain_text"],
+                "email_type": r.get("email_type", "sent"),
             }
             for r in rows
         ]
@@ -387,18 +426,22 @@ async def generate_email_endpoint(req: GenerateEmailRequest):
 @router.post("/save-email")
 async def save_email(req: SaveEmailRequest):
     """Save the generated email to Lakebase and track campaign sends."""
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    filename = f"campaign_{req.user_id}_{timestamp}.txt"
-
     try:
+        # Mark the specific saved draft as sent if provided
+        if req.saved_email_id:
+            _execute_sql(f"""
+                UPDATE campaign_emails SET draft_sent_date = NOW()
+                WHERE id = {req.saved_email_id} AND email_type = 'saved'
+                  AND user_id = '{req.user_id}' AND draft_sent_date IS NULL
+            """)
+
         # Save email content to Lakebase
         escaped_subject = req.subject.replace("'", "''")
-        escaped_html = req.html.replace("'", "''")
         escaped_plain = req.plain_text.replace("'", "''")
         _execute_sql(f"""
-            INSERT INTO campaign_emails (user_id, filename, subject, html_body, plain_text, saved_at)
-            VALUES ('{req.user_id}', '{filename}', '{escaped_subject}',
-                    '{escaped_html}', '{escaped_plain}', NOW())
+            INSERT INTO campaign_emails (user_id, subject, plain_text, email_sent_date, email_type)
+            VALUES ('{req.user_id}', '{escaped_subject}',
+                    '{escaped_plain}', NOW(), 'sent')
         """)
 
         # Insert campaign tracking rows for each property
@@ -417,10 +460,57 @@ async def save_email(req: SaveEmailRequest):
             )
             _execute_sql(insert_sql)
 
-        saved_path = f"lakebase://xome/campaign_emails/{filename}"
-        return {"path": saved_path, "filename": filename}
+        return {"message": "Email sent successfully"}
     except Exception as e:
         logger.exception("Failed to save email")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/save-draft")
+async def save_draft(req: SaveEmailRequest):
+    """Save the generated email as a draft to Lakebase without marking as sent."""
+    try:
+        escaped_subject = req.subject.replace("'", "''")
+        escaped_plain = req.plain_text.replace("'", "''")
+        _execute_sql(f"""
+            INSERT INTO campaign_emails (user_id, subject, plain_text, email_type, email_saved_date, email_sent_date)
+            VALUES ('{req.user_id}', '{escaped_subject}',
+                    '{escaped_plain}', 'saved', NOW(), NULL)
+        """)
+
+        # Insert campaign tracking rows for each property
+        if req.properties:
+            value_rows = []
+            for prop in req.properties:
+                pid = prop.get("property_id", "")
+                rid = prop.get("recommendation_id", "")
+                value_rows.append(
+                    f"('{req.user_id}', '{pid}', '{rid}', CURRENT_DATE, false)"
+                )
+            insert_sql = (
+                f"INSERT INTO campaign_tracking "
+                f"(user_id, property_id, recommendation_id, campaign_date, campaign_status) "
+                f"VALUES {', '.join(value_rows)}"
+            )
+            _execute_sql(insert_sql)
+
+        return {"message": "Draft saved successfully"}
+    except Exception as e:
+        logger.exception("Failed to save draft")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/delete-saved-email")
+async def delete_saved_email(req: DeleteSavedEmailRequest):
+    """Soft-delete a saved email by setting saved_email_delete_date."""
+    try:
+        _execute_sql(f"""
+            UPDATE campaign_emails SET saved_email_delete_date = NOW()
+            WHERE id = {req.email_id} AND user_id = '{req.user_id}'
+        """)
+        return {"success": True}
+    except Exception as e:
+        logger.exception("Failed to delete saved email")
         raise HTTPException(status_code=500, detail=str(e))
 
 

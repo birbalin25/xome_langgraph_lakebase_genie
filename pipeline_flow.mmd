@@ -22,7 +22,7 @@ flowchart TD
     %% ── Frontend ──
     subgraph FE["Frontend — React + TailwindCSS"]
         direction LR
-        D["Dashboard View<br/>Genie Search → Raw Table<br/>→ User Detail → Generate Email"]:::ui
+        D["Dashboard View<br/>Genie Search → Raw Table<br/>→ User Detail → Generate Email<br/>→ Save / Send / Delete Draft"]:::ui
     end
 
     %% ── REST API ──
@@ -33,11 +33,17 @@ flowchart TD
             A2["GET /properties/:id"]:::api
             A3["GET /users/:id/profile"]:::api
             A4["POST /users/:id/listings"]:::api
-            A5["POST /save-email"]:::api
+            A6["POST /users/:id/past-emails"]:::api
         end
         subgraph LG_EP["LangGraph Endpoints"]
             GQ["POST /genie-query"]:::api
             G1["POST /generate-email"]:::api
+        end
+        subgraph EMAIL_EP["Email Management"]
+            A5["POST /save-email<br/>Send + track campaign"]:::api
+            A7["POST /save-draft<br/>Accumulate drafts"]:::api
+            A8["POST /delete-saved-email<br/>Soft-delete draft"]:::api
+            A9["POST /refine-email<br/>AI refinement"]:::api
         end
     end
 
@@ -52,13 +58,13 @@ flowchart TD
 
             subgraph GENIE_BRANCH["Genie Branch — source='genie'"]
                 direction TB
-                QG["1a. query_genie<br/>Calls Genie Spaces API<br/>Returns raw columns + rows<br/>📊 @mlflow.trace · tool"]:::genie
+                QG["1a. query_genie<br/>Calls Genie Spaces API<br/>Returns raw columns + rows<br/>@mlflow.trace · tool"]:::genie
             end
 
             subgraph EMAIL_BRANCH["Email Branch — source='dashboard'"]
                 direction TB
-                EC["1b. enrich_context<br/>Fetches browsing history<br/>from Lakebase<br/>📊 @mlflow.trace · tool"]:::gn
-                GE["2b. generate_email<br/>Validates inputs<br/>Prompt → Claude → parse<br/>📊 @mlflow.trace · chain"]:::gn
+                EC["1b. enrich_context<br/>Fetches browsing history<br/>from Lakebase<br/>@mlflow.trace · tool"]:::gn
+                GE["2b. generate_email<br/>Validates inputs<br/>Prompt → Claude → parse<br/>@mlflow.trace · chain"]:::gn
             end
 
             ERR["handle_error<br/>Format error response"]:::er
@@ -84,6 +90,7 @@ flowchart TD
             T3["recommendations · 5K"]:::lb
             T4["browsing · 10K"]:::lb
             T5["campaign_tracking"]:::lb
+            T6["campaign_emails<br/>subject, plain_text<br/>email_type, draft_sent_date<br/>saved_email_delete_date"]:::lb
         end
     end
 
@@ -98,26 +105,36 @@ flowchart TD
     subgraph OUT["Output"]
         direction LR
         O0["Genie Result Table<br/>Clickable user_id → Detail<br/>Clickable property_id → Modal"]:::ui
-        O1["Dashboard<br/>Email Preview + Save"]:::ui
+        O1["Email Preview<br/>Edit · Refine with AI<br/>Save Draft · Send · Delete"]:::ui
     end
 
     %% ── Vertical flow ──
     D -->|"NL query"| GQ
     D -->|"user_id + profile + properties"| G1
-    D -.->|"filters, profile, listings, property detail"| SQL_EP
+    D -.->|"filters, profile, listings, past-emails"| SQL_EP
     GQ --> S
     G1 --> S
     GE --> LLM
+    A9 --> LLM
     SQL_EP --> LB_DB
     EN -->|"genie: raw table"| O0
     EN -->|"dashboard: email"| O1
-    O1 -->|"track sent"| T5
+    O1 -->|"send"| A5
+    O1 -->|"save draft"| A7
+    O1 -->|"delete"| A8
+    O1 -->|"refine"| A9
+    A5 -->|"track sent"| T5
+    A5 -->|"store email"| T6
+    A7 -->|"track saved"| T5
+    A7 -->|"store draft"| T6
+    A8 -->|"soft-delete"| T6
 
     %% ── Data reads ──
     QG -->|"query"| GENIE_API
     EC -.->|"browsing context"| T4
     A2 -.->|"single row"| T2
     A4 -.->|"LEFT JOIN"| T5
+    A6 -.->|"JOIN emails+tracking"| T6
     O0 -.->|"click property_id"| A2
 
     %% ── Tracing links ──

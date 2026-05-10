@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Loader2, Sparkles, X } from "lucide-react";
+import { Loader2, Sparkles, Trash2, X } from "lucide-react";
 import type { GeneratedEmail, PastEmail, Property } from "../../types";
 
 interface EmailPreviewProps {
@@ -15,6 +15,8 @@ interface EmailPreviewProps {
     previousEmail?: { subject: string; plain_text: string; saved_at?: string } | null
   ) => Promise<{ subject: string; plain_text: string }>;
   onUpdateSubject?: (subject: string) => void;
+  onSelectPastEmail?: (emailId: number | null) => void;
+  onDeleteSavedEmail?: (emailId: number) => void;
 }
 
 // Script injected into the iframe to intercept link clicks
@@ -73,6 +75,8 @@ export default function EmailPreview({
   onUpdatePlainText,
   onRefineWithAI,
   onUpdateSubject,
+  onSelectPastEmail,
+  onDeleteSavedEmail,
 }: EmailPreviewProps) {
   const [tab, setTab] = useState<"html" | "plain">("html");
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -80,21 +84,48 @@ export default function EmailPreview({
   const [draftText, setDraftText] = useState("");
   const [viewingPast, setViewingPast] = useState(false);
   const [viewingPastText, setViewingPastText] = useState("");
+  const [viewingPastSubject, setViewingPastSubject] = useState("");
+  const [viewingPastType, setViewingPastType] = useState<'sent' | 'saved' | null>(null);
   const [draftSubject, setDraftSubject] = useState("");
   const [showRefineBar, setShowRefineBar] = useState(false);
   const [refinePrompt, setRefinePrompt] = useState("");
   const [refining, setRefining] = useState(false);
+
+  // Track which email_id we're currently viewing in the dropdown
+  const [viewingPastEmailId, setViewingPastEmailId] = useState<number | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // Reset editing/viewing state when email changes (new generation)
   useEffect(() => {
     setEditing(false);
     setViewingPast(false);
     setViewingPastText("");
+    setViewingPastSubject("");
+    setViewingPastType(null);
+    setViewingPastEmailId(null);
+    setShowDeleteConfirm(false);
     setDraftSubject("");
     setShowRefineBar(false);
     setRefinePrompt("");
     setRefining(false);
   }, [email]);
+
+  // When pastEmails list changes (after send/save/draft), reset if viewed email is gone
+  useEffect(() => {
+    if (!viewingPast) return;
+    if (viewingPastEmailId != null) {
+      const stillExists = pastEmails.some((pe) => pe.email_id === viewingPastEmailId);
+      if (!stillExists) {
+        setViewingPast(false);
+        setViewingPastText("");
+        setViewingPastSubject("");
+        setViewingPastType(null);
+        setViewingPastEmailId(null);
+        setEditing(false);
+        onSelectPastEmail?.(null);
+      }
+    }
+  }, [pastEmails]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Write HTML into the iframe with click interceptor
   useEffect(() => {
@@ -157,30 +188,52 @@ export default function EmailPreview({
       // Go back to current email view
       setViewingPast(false);
       setViewingPastText("");
+      setViewingPastSubject("");
+      setViewingPastType(null);
+      setViewingPastEmailId(null);
       setEditing(false);
+      setShowRefineBar(false);
+      setRefinePrompt("");
+      onSelectPastEmail?.(null);
     } else {
       const idx = parseInt(value, 10);
       const past = pastEmails[idx];
       if (past) {
         setViewingPast(true);
         setViewingPastText(past.plain_text);
+        setViewingPastSubject(past.subject);
+        setViewingPastType(past.email_type || 'sent');
+        setViewingPastEmailId(past.email_id ?? null);
         setEditing(false);
+        setShowRefineBar(false);
+        setRefinePrompt("");
+        onSelectPastEmail?.(past.email_id ?? null);
       }
     }
   };
 
   const handleEdit = () => {
-    setDraftText(email.plain_text);
-    setDraftSubject(email.subject);
+    if (viewingPast && viewingPastType === 'saved') {
+      setDraftText(viewingPastText);
+      setDraftSubject(viewingPastSubject);
+    } else {
+      setDraftText(email.plain_text);
+      setDraftSubject(email.subject);
+    }
     setEditing(true);
   };
 
   const handleSave = () => {
-    if (onUpdatePlainText) {
-      onUpdatePlainText(draftText);
-    }
-    if (onUpdateSubject && draftSubject !== email.subject) {
-      onUpdateSubject(draftSubject);
+    if (viewingPast && viewingPastType === 'saved') {
+      // Update the viewed saved email text in place
+      setViewingPastText(draftText);
+      setViewingPastSubject(draftSubject);
+      // Also push changes to the parent so they persist
+      if (onUpdatePlainText) onUpdatePlainText(draftText);
+      if (onUpdateSubject) onUpdateSubject(draftSubject);
+    } else {
+      if (onUpdatePlainText) onUpdatePlainText(draftText);
+      if (onUpdateSubject && draftSubject !== email.subject) onUpdateSubject(draftSubject);
     }
     setEditing(false);
     setShowRefineBar(false);
@@ -189,7 +242,12 @@ export default function EmailPreview({
 
   const handleCancel = () => {
     setEditing(false);
-    setDraftSubject("");
+    if (viewingPast && viewingPastType === 'saved') {
+      // Restore draft to saved email values
+      setDraftSubject(viewingPastSubject);
+    } else {
+      setDraftSubject("");
+    }
     setShowRefineBar(false);
     setRefinePrompt("");
   };
@@ -231,7 +289,9 @@ export default function EmailPreview({
             className="ml-1 inline-block w-[calc(100%-60px)] rounded border border-gray-300 px-2 py-0.5 text-sm font-medium text-gray-900 focus:border-xome-500 focus:outline-none focus:ring-1 focus:ring-xome-500"
           />
         ) : (
-          <span className="font-medium text-gray-900">{email.subject}</span>
+          <span className="font-medium text-gray-900">
+            {viewingPast ? viewingPastSubject : email.subject}
+          </span>
         )}
       </div>
 
@@ -273,21 +333,21 @@ export default function EmailPreview({
             {/* Toolbar */}
             <div className="flex items-center justify-between border-b border-gray-100 px-4 py-2">
               <select
+                key={pastEmails.map((pe) => `${pe.email_id ?? ''}_${pe.email_type}`).join(',')}
                 onChange={handleDropdownChange}
-                defaultValue=""
+                defaultValue="__current__"
                 className="rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 focus:border-xome-500 focus:outline-none focus:ring-1 focus:ring-xome-500"
               >
-                <option value="" disabled>
-                  Load past email...
-                </option>
                 <option value="__current__">Current email</option>
                 {pastEmails.map((pe, i) => (
                   <option key={i} value={i}>
-                    email_sent_on_{pe.saved_at.replace(/[: ]/g, "_")}
+                    {pe.email_type === 'saved'
+                      ? `saved_email_${pe.saved_at.replace(/[: ]/g, "_")}`
+                      : `email_sent_on_${pe.saved_at.replace(/[: ]/g, "_")}`}
                   </option>
                 ))}
               </select>
-              {!viewingPast && (
+              {(!viewingPast || viewingPastType === 'saved') && (
                 <div className="flex gap-2">
                   {editing ? (
                     <>
@@ -314,12 +374,23 @@ export default function EmailPreview({
                       </button>
                     </>
                   ) : (
-                    <button
-                      onClick={handleEdit}
-                      className="rounded border border-gray-300 px-3 py-1 text-xs font-medium text-gray-600 transition hover:bg-gray-50"
-                    >
-                      Edit
-                    </button>
+                    <>
+                      <button
+                        onClick={handleEdit}
+                        className="rounded border border-gray-300 px-3 py-1 text-xs font-medium text-gray-600 transition hover:bg-gray-50"
+                      >
+                        Edit
+                      </button>
+                      {viewingPast && viewingPastType === 'saved' && onDeleteSavedEmail && viewingPastEmailId != null && (
+                        <button
+                          onClick={() => setShowDeleteConfirm(true)}
+                          className="flex items-center gap-1 rounded border border-red-300 px-3 py-1 text-xs font-medium text-red-600 transition hover:bg-red-50"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          Delete
+                        </button>
+                      )}
+                    </>
                   )}
                 </div>
               )}
@@ -359,8 +430,8 @@ export default function EmailPreview({
               </div>
             )}
 
-            {/* Text area (editing current) or read-only pre */}
-            {viewingPast ? (
+            {/* Text area (editing current/saved) or read-only pre */}
+            {viewingPast && !editing ? (
               <pre className="max-h-[500px] overflow-auto whitespace-pre-wrap p-4 text-sm text-gray-500 bg-gray-50">
                 {viewingPastText}
               </pre>
@@ -378,6 +449,44 @@ export default function EmailPreview({
           </div>
         )}
       </div>
+
+      {/* Delete confirmation dialog */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="rounded-lg bg-white p-6 shadow-xl max-w-sm w-full mx-4">
+            <h3 className="text-base font-semibold text-gray-900 mb-2">Delete saved email?</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Are you sure you want to delete this saved email? This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (onDeleteSavedEmail && viewingPastEmailId != null) {
+                    onDeleteSavedEmail(viewingPastEmailId);
+                    setShowDeleteConfirm(false);
+                    setViewingPast(false);
+                    setViewingPastText("");
+                    setViewingPastSubject("");
+                    setViewingPastType(null);
+                    setViewingPastEmailId(null);
+                    setEditing(false);
+                    onSelectPastEmail?.(null);
+                  }
+                }}
+                className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

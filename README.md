@@ -16,6 +16,7 @@ An AI-powered real estate campaign tool that generates personalized emails promo
 4. **Clickable `property_id` cells** open a property detail modal with image, stats, and description
 5. Use **follow-up queries** to refine results — the conversation context is preserved
 6. Click **New Search** to start a fresh conversation
+7. Select multiple users from the table to open a **multi-user detail view** with collapsible per-user sections
 
 ### Dashboard Email Generation
 
@@ -23,8 +24,12 @@ An AI-powered real estate campaign tool that generates personalized emails promo
 2. Use the **filter sidebar** to narrow down by city, state, price range, property type, segment, and listing count (1–30)
 3. Click **Generate Email** — LangGraph fetches browsing history for personalization, then Claude generates a personalized HTML email
 4. Preview the email (HTML or plain text), click property links to see detail modals
-5. Click **Save** to persist the email to Lakebase and record each property in `campaign_tracking`
-6. Properties already sent in a campaign display a **"Campaign sent on {date}"** banner
+5. **Edit** the plain text directly or use **Refine with AI** to modify the email via an LLM prompt
+6. Click **Save Email** to save a draft — drafts accumulate (no overwrite), and multiple drafts can coexist
+7. Click **Send Email** to persist and track the campaign; if viewing a saved draft, that draft is marked as sent
+8. **Delete** saved drafts via the Delete button with confirmation dialog (soft-delete)
+9. Properties already sent in a campaign display a **"Campaign sent on {date}"** banner
+10. Load previous emails from the **dropdown** in the plain text tab to review or re-send
 
 **Critical rule:** Campaign properties come exclusively from the `recommendations` table. Browsing data is used for personalization tone only.
 
@@ -79,8 +84,12 @@ All endpoints are prefixed with `/api/campaign`.
 | `GET` | `/properties/{id}` | Full property details by ID |
 | `GET` | `/users/{id}/profile` | Full user profile |
 | `POST` | `/users/{id}/listings` | Top recommended properties for a user |
+| `POST` | `/users/{id}/past-emails` | Recent sent/saved emails for user+properties |
 | `POST` | `/generate-email` | Generate email via LangGraph (source=dashboard) |
-| `POST` | `/save-email` | Save email to Lakebase |
+| `POST` | `/save-email` | Send email — persists to Lakebase, tracks campaign |
+| `POST` | `/save-draft` | Save draft — accumulates without overwriting |
+| `POST` | `/delete-saved-email` | Soft-delete a saved email |
+| `POST` | `/refine-email` | Refine email subject + plain text via LLM |
 
 ---
 
@@ -94,8 +103,8 @@ Six tables in Lakebase (PostgreSQL). First four seeded by notebooks, last two au
 | `properties` | 1,000 | Listings with details (price, beds, baths, sqft, neighborhood, school rating, auction info) |
 | `browsing_activity` | 10,000 | User browsing events linked to properties |
 | `recommendations` | 5,000 | ML-scored property recommendations per user (score 0.0–1.0) |
-| `campaign_tracking` | — | Records which emails were sent for which user+property+recommendation |
-| `campaign_emails` | — | Saved email content (subject, html_body, plain_text, filename) |
+| `campaign_tracking` | — | Records which emails were sent/saved for each user+property+recommendation |
+| `campaign_emails` | — | Email content (subject, plain_text) with lifecycle: `email_type`, `email_sent_date`, `email_saved_date`, `draft_sent_date`, `saved_email_delete_date` |
 
 CSV exports of all tables are available in `data/` for offline reference.
 
@@ -114,6 +123,7 @@ agent_server/
   agent.py             # LLM setup (_SanitizedChatDatabricks)
   tools.py             # Lakebase helper (psycopg2 + connection pooling)
   prompts.py           # LLM prompt templates
+  refine_email_prompts.py  # Refine with AI prompt
   config.py            # Configuration constants
   start_server.py      # FastAPI entry point + lifespan hooks
 frontend/
@@ -121,7 +131,7 @@ frontend/
     api/campaign.ts    # API client functions
     components/
       layout/          # AppShell, Header, Sidebar
-      genie/           # GenieSearchBar, GenieResultTable, GenieUserDetail
+      genie/           # GenieSearchBar, GenieResultTable, GenieUserDetail, GenieMultiUserDetail
       filters/         # FilterPanel
       users/           # UserProfileCard
       properties/      # PropertyCard, PropertyGrid, PropertyDetailModal

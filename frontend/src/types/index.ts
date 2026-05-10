@@ -41,6 +41,7 @@ export interface Property {
   recommendation_reason?: string;
   generated_at?: string;
   campaign_sent_date?: string | null;
+  campaign_saved_date?: string | null;
 }
 
 export interface FilterOptions {
@@ -66,6 +67,14 @@ export interface GeneratedEmail {
   html: string;
   plain_text: string;
   raw: string;
+}
+
+export interface PastEmail {
+  email_id?: number;
+  saved_at: string;
+  subject: string;
+  plain_text: string;
+  email_type: 'sent' | 'saved';
 }
 
 export interface GenieColumn {

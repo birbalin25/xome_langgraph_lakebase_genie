@@ -40,13 +40,48 @@ async def lifespan(app: FastAPI):
             CREATE TABLE IF NOT EXISTS campaign_emails (
                 id SERIAL PRIMARY KEY,
                 user_id TEXT NOT NULL,
-                filename TEXT NOT NULL,
                 subject TEXT,
-                html_body TEXT,
                 plain_text TEXT,
                 saved_at TIMESTAMP DEFAULT NOW()
             )
         """)
+        # Schema migration: rename saved_at → email_sent_date, add email_type + email_saved_date
+        try:
+            _execute_sql("ALTER TABLE campaign_emails RENAME COLUMN saved_at TO email_sent_date")
+        except Exception:
+            pass  # Column already renamed
+        try:
+            _execute_sql("ALTER TABLE campaign_emails ALTER COLUMN email_sent_date DROP DEFAULT")
+        except Exception:
+            pass  # Default already dropped
+        try:
+            _execute_sql("ALTER TABLE campaign_emails ADD COLUMN IF NOT EXISTS email_type TEXT DEFAULT 'sent'")
+        except Exception:
+            pass
+        try:
+            _execute_sql("ALTER TABLE campaign_emails ADD COLUMN IF NOT EXISTS email_saved_date TIMESTAMP")
+        except Exception:
+            pass
+        try:
+            _execute_sql("ALTER TABLE campaign_emails ADD COLUMN IF NOT EXISTS draft_sent_date TIMESTAMP")
+        except Exception:
+            pass
+        try:
+            _execute_sql("ALTER TABLE campaign_emails ADD COLUMN IF NOT EXISTS saved_email_delete_date TIMESTAMP")
+        except Exception:
+            pass
+        try:
+            _execute_sql("ALTER TABLE campaign_tracking ADD COLUMN IF NOT EXISTS user_activity TEXT")
+        except Exception:
+            pass
+        try:
+            _execute_sql("ALTER TABLE campaign_emails DROP COLUMN IF EXISTS filename")
+        except Exception:
+            pass
+        try:
+            _execute_sql("ALTER TABLE campaign_emails DROP COLUMN IF EXISTS html_body")
+        except Exception:
+            pass
         logger.info("campaign_tracking and campaign_emails tables ready")
     except Exception:
         logger.exception("Failed to create campaign tables")

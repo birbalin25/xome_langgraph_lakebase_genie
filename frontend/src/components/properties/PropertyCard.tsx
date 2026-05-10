@@ -129,6 +129,15 @@ export default function PropertyCard({ property: p, selected, onToggle }: Proper
             </p>
           </div>
         )}
+
+        {/* Email saved banner */}
+        {p.campaign_saved_date && !p.campaign_sent_date && (
+          <div className="mt-3 rounded-md bg-amber-50 p-2 text-xs">
+            <p className="font-semibold text-amber-700">
+              Email saved on {formatDate(p.campaign_saved_date)}
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

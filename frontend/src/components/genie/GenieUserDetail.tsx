@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import type {
   FilterState,
   GeneratedEmail,
+  PastEmail,
   Property,
   UserProfile,
 } from "../../types";
@@ -34,14 +35,19 @@ export default function GenieUserDetail({
   const [email, setEmail] = useState<GeneratedEmail | null>(null);
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [savedPath, setSavedPath] = useState("");
+  const [savedMessage, setSavedMessage] = useState("");
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [savedDraftMessage, setSavedDraftMessage] = useState("");
   const [modalProperty, setModalProperty] = useState<Property | null>(null);
+  const [pastEmails, setPastEmails] = useState<PastEmail[]>([]);
+  const [selectedSavedEmailId, setSelectedSavedEmailId] = useState<number | null>(null);
 
   // Fetch profile + listings
   const loadData = useCallback(async () => {
     setLoading(true);
     setEmail(null);
-    setSavedPath("");
+    setSavedMessage("");
+    setSavedDraftMessage("");
     try {
       const [profile, listings] = await Promise.all([
         api.fetchUserProfile(userId),
@@ -81,20 +87,31 @@ export default function GenieUserDetail({
   const handleGenerateEmail = useCallback(async () => {
     if (!userId || selectedProperties.length === 0 || !userProfile) return;
     setGenerating(true);
-    setSavedPath("");
+    setSavedMessage("");
+    setSavedDraftMessage("");
+    setSelectedSavedEmailId(null);
     try {
+      const recentPast = pastEmails.length > 0
+        ? { subject: pastEmails[0].subject, plain_text: pastEmails[0].plain_text, saved_at: pastEmails[0].saved_at }
+        : null;
       const result = await api.generateEmail(
         userId,
         selectedProperties,
-        userProfile
+        userProfile,
+        recentPast
       );
       setEmail(result);
+      // Fetch past emails in the background
+      api
+        .fetchPastEmails(userId, selectedProperties.map((p) => p.property_id))
+        .then((emails) => setPastEmails(emails))
+        .catch(() => {});
     } catch (err) {
       console.error("Failed to generate email", err);
     } finally {
       setGenerating(false);
     }
-  }, [userId, selectedProperties, userProfile]);
+  }, [userId, selectedProperties, userProfile, pastEmails]);
 
   const handleSaveEmail = useCallback(async () => {
     if (!email || !userId) return;
@@ -103,14 +120,20 @@ export default function GenieUserDetail({
       const result = await api.saveEmail({
         user_id: userId,
         subject: email.subject,
-        html: email.html,
         plain_text: email.plain_text,
         properties: selectedProperties.map((p) => ({
           property_id: p.property_id,
           recommendation_id: p.recommendation_id,
         })),
+        saved_email_id: selectedSavedEmailId || undefined,
       });
-      setSavedPath(result.path);
+      setSavedMessage(result.message);
+
+      // Optimistically remove the sent draft from the dropdown immediately
+      if (selectedSavedEmailId) {
+        setPastEmails((prev) => prev.filter((pe) => pe.email_id !== selectedSavedEmailId));
+      }
+      setSelectedSavedEmailId(null);
 
       const today = new Date().toISOString().split("T")[0];
       setProperties((prev) =>
@@ -120,12 +143,69 @@ export default function GenieUserDetail({
             : p
         )
       );
+
+      // Re-fetch past emails in the background for canonical state
+      api
+        .fetchPastEmails(userId, selectedProperties.map((p) => p.property_id))
+        .then((emails) => setPastEmails(emails))
+        .catch(() => {});
     } catch (err) {
       console.error("Failed to save email", err);
     } finally {
       setSaving(false);
     }
+  }, [email, userId, selectedProperties, selectedPropertyIds, selectedSavedEmailId]);
+
+  const handleSaveDraft = useCallback(async () => {
+    if (!email || !userId) return;
+    setSavingDraft(true);
+    try {
+      const result = await api.saveDraft({
+        user_id: userId,
+        subject: email.subject,
+        plain_text: email.plain_text,
+        properties: selectedProperties.map((p) => ({
+          property_id: p.property_id,
+          recommendation_id: p.recommendation_id,
+        })),
+      });
+      setSavedDraftMessage(result.message);
+
+      const today = new Date().toISOString().split("T")[0];
+      setProperties((prev) =>
+        prev.map((p) =>
+          selectedPropertyIds.has(p.property_id)
+            ? { ...p, campaign_saved_date: p.campaign_saved_date ?? today }
+            : p
+        )
+      );
+
+      // Re-fetch past emails so dropdown updates in real time
+      api
+        .fetchPastEmails(userId, selectedProperties.map((p) => p.property_id))
+        .then((emails) => setPastEmails(emails))
+        .catch(() => {});
+    } catch (err) {
+      console.error("Failed to save draft", err);
+    } finally {
+      setSavingDraft(false);
+    }
   }, [email, userId, selectedProperties, selectedPropertyIds]);
+
+  const handleDeleteSavedEmail = useCallback(async (emailId: number) => {
+    // Optimistically remove from dropdown immediately
+    setPastEmails((prev) => prev.filter((pe) => pe.email_id !== emailId));
+    try {
+      await api.deleteSavedEmail(userId, emailId);
+      // Re-fetch in background for canonical state
+      api
+        .fetchPastEmails(userId, selectedProperties.map((p) => p.property_id))
+        .then((emails) => setPastEmails(emails))
+        .catch(() => {});
+    } catch (err) {
+      console.error("Failed to delete saved email", err);
+    }
+  }, [userId, selectedProperties]);
 
   if (loading) {
     return (
@@ -200,14 +280,29 @@ export default function GenieUserDetail({
           email={email}
           onGenerate={handleGenerateEmail}
           onSave={handleSaveEmail}
+          onSaveDraft={handleSaveDraft}
           generating={generating}
           saving={saving}
-          savedPath={savedPath}
+          savedMessage={savedMessage}
+          savingDraft={savingDraft}
+          savedDraftMessage={savedDraftMessage}
         />
         <EmailPreview
           email={email}
           properties={properties}
           onPropertyClick={(p) => setModalProperty(p)}
+          pastEmails={pastEmails}
+          onUpdatePlainText={(text) => {
+            if (email) setEmail({ ...email, plain_text: text });
+          }}
+          onRefineWithAI={(subject, plainText, prompt, previousEmail) =>
+            api.refineEmail(subject, plainText, prompt, previousEmail)
+          }
+          onUpdateSubject={(subject) => {
+            if (email) setEmail({ ...email, subject });
+          }}
+          onSelectPastEmail={(emailId) => setSelectedSavedEmailId(emailId)}
+          onDeleteSavedEmail={handleDeleteSavedEmail}
         />
       </div>
 
