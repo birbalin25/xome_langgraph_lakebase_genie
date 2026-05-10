@@ -171,11 +171,10 @@ export default function GenieUserDetail({
       });
       setSavedDraftMessage(result.message);
 
-      const today = new Date().toISOString().split("T")[0];
       setProperties((prev) =>
         prev.map((p) =>
           selectedPropertyIds.has(p.property_id)
-            ? { ...p, campaign_saved_date: p.campaign_saved_date ?? today }
+            ? { ...p, campaign_saved_date: new Date().toISOString() }
             : p
         )
       );
@@ -195,9 +194,25 @@ export default function GenieUserDetail({
   const handleDeleteSavedEmail = useCallback(async (emailId: number) => {
     // Optimistically remove from dropdown immediately
     setPastEmails((prev) => prev.filter((pe) => pe.email_id !== emailId));
+    // Optimistically clear "Email saved on" banner on selected properties
+    setProperties((prev) =>
+      prev.map((p) =>
+        selectedPropertyIds.has(p.property_id)
+          ? { ...p, campaign_saved_date: undefined }
+          : p
+      )
+    );
     try {
       await api.deleteSavedEmail(userId, emailId);
-      // Re-fetch in background for canonical state
+      // Re-fetch listings + past emails in background for canonical state
+      api
+        .fetchListings(userId, {
+          city: filters.city || undefined,
+          state: filters.state || undefined,
+          listing_count: filters.listing_count,
+        })
+        .then((listings) => setProperties(listings))
+        .catch(() => {});
       api
         .fetchPastEmails(userId, selectedProperties.map((p) => p.property_id))
         .then((emails) => setPastEmails(emails))
@@ -205,7 +220,7 @@ export default function GenieUserDetail({
     } catch (err) {
       console.error("Failed to delete saved email", err);
     }
-  }, [userId, selectedProperties]);
+  }, [userId, selectedProperties, selectedPropertyIds, filters]);
 
   if (loading) {
     return (

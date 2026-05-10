@@ -103,11 +103,13 @@ Browser → FastAPI (port 8000) → serves frontend/dist/ (static) + REST API (/
 
 **Draft accumulation** — Each "Save Email" creates a new row in `campaign_emails` with `email_type='saved'`. Drafts are never overwritten; multiple drafts for the same user/properties can coexist. Users manually delete old drafts via the Delete button.
 
-**Soft-delete** — Deleted saved emails set `saved_email_delete_date = NOW()` rather than physically removing the row. The `/past-emails` query filters out rows where `saved_email_delete_date IS NOT NULL`.
+**Soft-delete + banner clearing** — Deleted saved emails set `saved_email_delete_date = NOW()` on the `campaign_emails` row and also DELETE the corresponding `campaign_tracking` rows (where `campaign_status = false`), so the "Email saved on" banner disappears from property cards. The `/past-emails` query filters out rows where `saved_email_delete_date IS NOT NULL`.
 
 **Draft-to-sent tracking** — When a user sends a specific saved draft (selected via the dropdown), the backend sets `draft_sent_date = NOW()` on that draft row. The `/past-emails` query excludes saved emails where `draft_sent_date IS NOT NULL`, so sent drafts disappear from the dropdown.
 
-**Optimistic UI updates** — After sending a selected draft or deleting a saved email, the frontend immediately removes it from the local `pastEmails` state before the background re-fetch completes, ensuring the dropdown updates instantly.
+**Optimistic UI updates** — After sending a selected draft or deleting a saved email, the frontend immediately removes it from the local `pastEmails` state before the background re-fetch completes, ensuring the dropdown updates instantly. Deleting also optimistically clears `campaign_saved_date` on selected properties so the banner disappears immediately.
+
+**Timestamp overwrite on save** — Re-saving a draft always overwrites `campaign_saved_date` with the current full ISO timestamp (`new Date().toISOString()`), not a keep-first (`??`) pattern. The "Email saved on" banner displays the full timestamp (date + time) via `formatTimestamp()` in `frontend/src/lib/utils.ts`.
 
 **Frontend state management** — React hooks only (useState, useCallback, useEffect). No Redux/Zustand. `AppShell.tsx` is the main orchestrator holding Genie results, filter state, and view state.
 
@@ -136,7 +138,7 @@ Six tables in Lakebase (PostgreSQL). First four seeded by notebooks, last two au
 - `properties` (1,000 rows) — listings with details (price, beds, baths, sqft, neighborhood, school rating, auction info)
 - `browsing_activity` (10,000 rows) — user browsing events linked to properties
 - `recommendations` (5,000 rows) — ML-scored property recommendations per user (`recommendation_score` 0.0–1.0)
-- `campaign_tracking` — records which emails were sent/saved for which user+property+recommendation (`campaign_status`: true=sent, false=saved)
+- `campaign_tracking` — records which emails were sent/saved for which user+property+recommendation (`campaign_timestamp` TIMESTAMP, `campaign_status`: true=sent, false=saved, `user_activity`: 'email_sent'/'email_saved')
 - `campaign_emails` — saved email content (subject, plain_text) with lifecycle columns: `email_type` ('sent'/'saved'), `email_sent_date`, `email_saved_date`, `draft_sent_date`, `saved_email_delete_date`
 
 ## REST API Endpoints

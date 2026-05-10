@@ -249,13 +249,12 @@ export default function GenieMultiUserDetail({
             recommendation_id: p.recommendation_id,
           })),
         });
-        const today = new Date().toISOString().split("T")[0];
         updateUser(idx, (prev) => ({
           savingDraft: false,
           savedDraftMessage: result.message,
           properties: prev.properties.map((p) =>
             prev.selectedPropertyIds.has(p.property_id)
-              ? { ...p, campaign_saved_date: p.campaign_saved_date ?? today }
+              ? { ...p, campaign_saved_date: new Date().toISOString() }
               : p
           ),
         }));
@@ -319,16 +318,30 @@ export default function GenieMultiUserDetail({
     async (idx: number, emailId: number) => {
       const u = users[idx];
       if (!u) return;
-      // Optimistically remove from dropdown immediately
+      // Optimistically remove from dropdown and clear "Email saved on" banner
       updateUser(idx, (prev) => ({
         pastEmails: prev.pastEmails.filter((pe) => pe.email_id !== emailId),
+        properties: prev.properties.map((p) =>
+          prev.selectedPropertyIds.has(p.property_id)
+            ? { ...p, campaign_saved_date: undefined }
+            : p
+        ),
       }));
       try {
         await api.deleteSavedEmail(u.userId, emailId);
         const selectedProps = u.properties.filter((p) =>
           u.selectedPropertyIds.has(p.property_id)
         );
-        // Re-fetch in background for canonical state
+        // Re-fetch listings + past emails in background for canonical state
+        api
+          .fetchListings(u.userId, {
+            city: filters.city || undefined,
+            state: filters.state || undefined,
+            listing_count: filters.listing_count,
+            model,
+          })
+          .then((listings) => updateUser(idx, { properties: listings }))
+          .catch(() => {});
         api
           .fetchPastEmails(
             u.userId,
@@ -340,7 +353,7 @@ export default function GenieMultiUserDetail({
         console.error("Failed to delete saved email", err);
       }
     },
-    [users, updateUser]
+    [users, updateUser, filters, model]
   );
 
   const toggleCollapse = useCallback(

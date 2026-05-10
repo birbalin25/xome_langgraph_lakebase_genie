@@ -16,3 +16,18 @@ export function formatDate(value: string | undefined): string {
     return value;
   }
 }
+
+export function formatTimestamp(value: string | undefined): string {
+  if (!value) return "N/A";
+  try {
+    return new Date(value).toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch {
+    return value;
+  }
+}

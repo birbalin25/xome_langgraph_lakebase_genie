@@ -193,10 +193,10 @@ async def get_user_profile(user_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _fetch_listings_model_a(
+def _fetch_listings(
     user_id: str, city: Optional[str], state: Optional[str], listing_count: int
 ) -> list[dict]:
-    """Model A listing strategy — recommendations ranked by score."""
+    """Fetch recommended listings ranked by score with campaign tracking status."""
     where = [f"r.user_id = '{user_id}'", "r.is_active = true"]
     if city:
         where.append(f"p.city = '{city}'")
@@ -218,7 +218,7 @@ def _fetch_listings_model_a(
     FROM recommendations r
     JOIN properties p ON r.property_id = p.property_id
     LEFT JOIN (
-        SELECT user_id, property_id, MAX(campaign_date) AS campaign_sent_date
+        SELECT user_id, property_id, MAX(campaign_timestamp) AS campaign_sent_date
         FROM campaign_tracking
         WHERE campaign_status = true
         GROUP BY user_id, property_id
@@ -226,7 +226,7 @@ def _fetch_listings_model_a(
         ON ct.user_id = r.user_id
         AND ct.property_id = p.property_id
     LEFT JOIN (
-        SELECT user_id, property_id, MAX(campaign_date) AS campaign_saved_date
+        SELECT user_id, property_id, MAX(campaign_timestamp) AS campaign_saved_date
         FROM campaign_tracking
         WHERE campaign_status = false
         GROUP BY user_id, property_id
@@ -238,116 +238,14 @@ def _fetch_listings_model_a(
     LIMIT {min(max(listing_count, 1), 30)}
     """
     return _execute_sql(query)
-
-
-def _fetch_listings_model_b(
-    user_id: str, city: Optional[str], state: Optional[str], listing_count: int
-) -> list[dict]:
-    """Model B listing strategy — recommendations ranked by score."""
-    where = [f"r.user_id = '{user_id}'", "r.is_active = true"]
-    if city:
-        where.append(f"p.city = '{city}'")
-    if state:
-        where.append(f"p.state = '{state}'")
-    where_str = " AND ".join(where)
-
-    query = f"""
-    SELECT r.recommendation_id, r.recommendation_score, r.recommendation_reason,
-           r.generated_at,
-           p.property_id, p.address, p.city, p.state, p.zip_code,
-           p.price, p.beds, p.baths, p.sqft, p.property_type,
-           p.year_built, p.school_rating, p.neighborhood,
-           p.listing_status, p.days_on_market,
-           p.auction_date, p.auction_start_price,
-           p.hoa_fee, p.description, p.image_url,
-           ct.campaign_sent_date,
-           ct_saved.campaign_saved_date
-    FROM recommendations r
-    JOIN properties p ON r.property_id = p.property_id
-    LEFT JOIN (
-        SELECT user_id, property_id, MAX(campaign_date) AS campaign_sent_date
-        FROM campaign_tracking
-        WHERE campaign_status = true
-        GROUP BY user_id, property_id
-    ) ct
-        ON ct.user_id = r.user_id
-        AND ct.property_id = p.property_id
-    LEFT JOIN (
-        SELECT user_id, property_id, MAX(campaign_date) AS campaign_saved_date
-        FROM campaign_tracking
-        WHERE campaign_status = false
-        GROUP BY user_id, property_id
-    ) ct_saved
-        ON ct_saved.user_id = r.user_id
-        AND ct_saved.property_id = p.property_id
-    WHERE {where_str}
-    ORDER BY r.recommendation_score DESC
-    LIMIT {min(max(listing_count, 1), 30)}
-    """
-    return _execute_sql(query)
-
-
-def _fetch_listings_on_the_fly(
-    user_id: str, city: Optional[str], state: Optional[str], listing_count: int
-) -> list[dict]:
-    """On-the-fly-logic listing strategy — recommendations ranked by score."""
-    where = [f"r.user_id = '{user_id}'", "r.is_active = true"]
-    if city:
-        where.append(f"p.city = '{city}'")
-    if state:
-        where.append(f"p.state = '{state}'")
-    where_str = " AND ".join(where)
-
-    query = f"""
-    SELECT r.recommendation_id, r.recommendation_score, r.recommendation_reason,
-           r.generated_at,
-           p.property_id, p.address, p.city, p.state, p.zip_code,
-           p.price, p.beds, p.baths, p.sqft, p.property_type,
-           p.year_built, p.school_rating, p.neighborhood,
-           p.listing_status, p.days_on_market,
-           p.auction_date, p.auction_start_price,
-           p.hoa_fee, p.description, p.image_url,
-           ct.campaign_sent_date,
-           ct_saved.campaign_saved_date
-    FROM recommendations r
-    JOIN properties p ON r.property_id = p.property_id
-    LEFT JOIN (
-        SELECT user_id, property_id, MAX(campaign_date) AS campaign_sent_date
-        FROM campaign_tracking
-        WHERE campaign_status = true
-        GROUP BY user_id, property_id
-    ) ct
-        ON ct.user_id = r.user_id
-        AND ct.property_id = p.property_id
-    LEFT JOIN (
-        SELECT user_id, property_id, MAX(campaign_date) AS campaign_saved_date
-        FROM campaign_tracking
-        WHERE campaign_status = false
-        GROUP BY user_id, property_id
-    ) ct_saved
-        ON ct_saved.user_id = r.user_id
-        AND ct_saved.property_id = p.property_id
-    WHERE {where_str}
-    ORDER BY r.recommendation_score DESC
-    LIMIT {min(max(listing_count, 1), 30)}
-    """
-    return _execute_sql(query)
-
-
-_MODEL_STRATEGIES = {
-    "Model A": _fetch_listings_model_a,
-    "Model B": _fetch_listings_model_b,
-    "On-the-fly-logic": _fetch_listings_on_the_fly,
-}
 
 
 @router.post("/users/{user_id}/listings")
 async def get_user_listings(user_id: str, req: ListingsRequest):
-    """Return top recommended properties for a user using the selected model strategy."""
-    strategy = _MODEL_STRATEGIES.get(req.model, _fetch_listings_model_a)
+    """Return top recommended properties for a user."""
     logger.info("Fetching listings for user=%s model=%s", user_id, req.model)
     try:
-        rows = strategy(user_id, req.city, req.state, req.listing_count)
+        rows = _fetch_listings(user_id, req.city, req.state, req.listing_count)
         return {"properties": rows}
     except Exception as e:
         logger.exception("Failed to fetch listings")
@@ -370,7 +268,7 @@ async def get_past_emails(user_id: str, req: PastEmailsRequest):
         FROM campaign_emails ce
         JOIN campaign_tracking ct
             ON ct.user_id = ce.user_id
-            AND ct.campaign_date = COALESCE(ce.email_sent_date, ce.email_saved_date)::date
+            AND ct.campaign_timestamp::date = COALESCE(ce.email_sent_date, ce.email_saved_date)::date
         WHERE ce.user_id = '{user_id}'
             AND ct.property_id IN ({escaped_ids})
             AND (ce.email_type = 'sent' OR (ce.email_type = 'saved' AND ce.draft_sent_date IS NULL))
@@ -451,11 +349,11 @@ async def save_email(req: SaveEmailRequest):
                 pid = prop.get("property_id", "")
                 rid = prop.get("recommendation_id", "")
                 value_rows.append(
-                    f"('{req.user_id}', '{pid}', '{rid}', CURRENT_DATE, true)"
+                    f"('{req.user_id}', '{pid}', '{rid}', NOW(), true, 'email_sent')"
                 )
             insert_sql = (
                 f"INSERT INTO campaign_tracking "
-                f"(user_id, property_id, recommendation_id, campaign_date, campaign_status) "
+                f"(user_id, property_id, recommendation_id, campaign_timestamp, campaign_status, user_activity) "
                 f"VALUES {', '.join(value_rows)}"
             )
             _execute_sql(insert_sql)
@@ -485,11 +383,11 @@ async def save_draft(req: SaveEmailRequest):
                 pid = prop.get("property_id", "")
                 rid = prop.get("recommendation_id", "")
                 value_rows.append(
-                    f"('{req.user_id}', '{pid}', '{rid}', CURRENT_DATE, false)"
+                    f"('{req.user_id}', '{pid}', '{rid}', NOW(), false, 'email_saved')"
                 )
             insert_sql = (
                 f"INSERT INTO campaign_tracking "
-                f"(user_id, property_id, recommendation_id, campaign_date, campaign_status) "
+                f"(user_id, property_id, recommendation_id, campaign_timestamp, campaign_status, user_activity) "
                 f"VALUES {', '.join(value_rows)}"
             )
             _execute_sql(insert_sql)
@@ -507,6 +405,15 @@ async def delete_saved_email(req: DeleteSavedEmailRequest):
         _execute_sql(f"""
             UPDATE campaign_emails SET saved_email_delete_date = NOW()
             WHERE id = {req.email_id} AND user_id = '{req.user_id}'
+        """)
+        # Delete matching campaign_tracking rows so "Email saved on" banner clears
+        _execute_sql(f"""
+            DELETE FROM campaign_tracking
+            WHERE user_id = '{req.user_id}' AND campaign_status = false
+              AND campaign_timestamp::date IN (
+                  SELECT email_saved_date::date FROM campaign_emails
+                  WHERE id = {req.email_id}
+              )
         """)
         return {"success": True}
     except Exception as e:

@@ -1,6 +1,6 @@
 import { X, Bath, BedDouble, Maximize, Star, Calendar, DollarSign, MapPin, Home, Clock, Award } from "lucide-react";
 import type { Property } from "../../types";
-import { formatDate, formatPrice } from "../../lib/utils";
+import { formatDate, formatPrice, formatTimestamp } from "../../lib/utils";
 
 interface PropertyDetailModalProps {
   property: Property;
@@ -153,7 +153,7 @@ export default function PropertyDetailModal({ property: p, onClose }: PropertyDe
           {p.campaign_saved_date && !p.campaign_sent_date && (
             <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4">
               <p className="text-sm font-semibold text-amber-700">
-                Email saved on {formatDate(p.campaign_saved_date)}
+                Email saved on {formatTimestamp(p.campaign_saved_date)}
               </p>
             </div>
           )}

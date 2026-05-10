@@ -1,6 +1,6 @@
 import { Bath, BedDouble, Check, Maximize, Star } from "lucide-react";
 import type { Property } from "../../types";
-import { formatDate, formatPrice } from "../../lib/utils";
+import { formatDate, formatPrice, formatTimestamp } from "../../lib/utils";
 
 interface PropertyCardProps {
   property: Property;
@@ -134,7 +134,7 @@ export default function PropertyCard({ property: p, selected, onToggle }: Proper
         {p.campaign_saved_date && !p.campaign_sent_date && (
           <div className="mt-3 rounded-md bg-amber-50 p-2 text-xs">
             <p className="font-semibold text-amber-700">
-              Email saved on {formatDate(p.campaign_saved_date)}
+              Email saved on {formatTimestamp(p.campaign_saved_date)}
             </p>
           </div>
         )}

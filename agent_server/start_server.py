@@ -32,8 +32,9 @@ async def lifespan(app: FastAPI):
                 user_id TEXT,
                 property_id TEXT,
                 recommendation_id TEXT,
-                campaign_date DATE,
-                campaign_status BOOLEAN
+                campaign_timestamp TIMESTAMP,
+                campaign_status BOOLEAN,
+                user_activity TEXT
             )
         """)
         _execute_sql("""
@@ -68,10 +69,6 @@ async def lifespan(app: FastAPI):
             pass
         try:
             _execute_sql("ALTER TABLE campaign_emails ADD COLUMN IF NOT EXISTS saved_email_delete_date TIMESTAMP")
-        except Exception:
-            pass
-        try:
-            _execute_sql("ALTER TABLE campaign_tracking ADD COLUMN IF NOT EXISTS user_activity TEXT")
         except Exception:
             pass
         try:

@@ -89,7 +89,7 @@ flowchart TD
             T2["properties · 1K"]:::lb
             T3["recommendations · 5K"]:::lb
             T4["browsing · 10K"]:::lb
-            T5["campaign_tracking"]:::lb
+            T5["campaign_tracking<br/>campaign_timestamp TIMESTAMP<br/>campaign_status, user_activity"]:::lb
             T6["campaign_emails<br/>subject, plain_text<br/>email_type, draft_sent_date<br/>saved_email_delete_date"]:::lb
         end
     end
@@ -128,6 +128,7 @@ flowchart TD
     A7 -->|"track saved"| T5
     A7 -->|"store draft"| T6
     A8 -->|"soft-delete"| T6
+    A8 -->|"delete tracking"| T5
 
     %% ── Data reads ──
     QG -->|"query"| GENIE_API

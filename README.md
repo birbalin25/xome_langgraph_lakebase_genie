@@ -25,10 +25,10 @@ An AI-powered real estate campaign tool that generates personalized emails promo
 3. Click **Generate Email** — LangGraph fetches browsing history for personalization, then Claude generates a personalized HTML email
 4. Preview the email (HTML or plain text), click property links to see detail modals
 5. **Edit** the plain text directly or use **Refine with AI** to modify the email via an LLM prompt
-6. Click **Save Email** to save a draft — drafts accumulate (no overwrite), and multiple drafts can coexist
+6. Click **Save Email** to save a draft — drafts accumulate, and the "Email saved on" timestamp always updates to the latest save time
 7. Click **Send Email** to persist and track the campaign; if viewing a saved draft, that draft is marked as sent
-8. **Delete** saved drafts via the Delete button with confirmation dialog (soft-delete)
-9. Properties already sent in a campaign display a **"Campaign sent on {date}"** banner
+8. **Delete** saved drafts via the Delete button with confirmation dialog — also clears the "Email saved on" banner from property cards
+9. Properties already sent in a campaign display a **"Campaign sent on {timestamp}"** banner; saved drafts show **"Email saved on {timestamp}"** with full date + time
 10. Load previous emails from the **dropdown** in the plain text tab to review or re-send
 
 **Critical rule:** Campaign properties come exclusively from the `recommendations` table. Browsing data is used for personalization tone only.
@@ -87,8 +87,8 @@ All endpoints are prefixed with `/api/campaign`.
 | `POST` | `/users/{id}/past-emails` | Recent sent/saved emails for user+properties |
 | `POST` | `/generate-email` | Generate email via LangGraph (source=dashboard) |
 | `POST` | `/save-email` | Send email — persists to Lakebase, tracks campaign |
-| `POST` | `/save-draft` | Save draft — accumulates without overwriting |
-| `POST` | `/delete-saved-email` | Soft-delete a saved email |
+| `POST` | `/save-draft` | Save draft — accumulates, updates tracking timestamp |
+| `POST` | `/delete-saved-email` | Soft-delete a saved email + clear campaign tracking |
 | `POST` | `/refine-email` | Refine email subject + plain text via LLM |
 
 ---
@@ -103,7 +103,7 @@ Six tables in Lakebase (PostgreSQL). First four seeded by notebooks, last two au
 | `properties` | 1,000 | Listings with details (price, beds, baths, sqft, neighborhood, school rating, auction info) |
 | `browsing_activity` | 10,000 | User browsing events linked to properties |
 | `recommendations` | 5,000 | ML-scored property recommendations per user (score 0.0–1.0) |
-| `campaign_tracking` | — | Records which emails were sent/saved for each user+property+recommendation |
+| `campaign_tracking` | — | Records which emails were sent/saved for each user+property+recommendation (`campaign_timestamp` TIMESTAMP, `user_activity`: 'email_sent'/'email_saved') |
 | `campaign_emails` | — | Email content (subject, plain_text) with lifecycle: `email_type`, `email_sent_date`, `email_saved_date`, `draft_sent_date`, `saved_email_delete_date` |
 
 CSV exports of all tables are available in `data/` for offline reference.
