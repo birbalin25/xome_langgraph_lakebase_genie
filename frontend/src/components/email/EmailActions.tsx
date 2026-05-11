@@ -13,6 +13,7 @@ interface EmailActionsProps {
   savedMessage: string;
   savingDraft: boolean;
   savedDraftMessage: string;
+  viewingSentEmail?: boolean;
 }
 
 export default function EmailActions({
@@ -27,6 +28,7 @@ export default function EmailActions({
   savedMessage,
   savingDraft,
   savedDraftMessage,
+  viewingSentEmail,
 }: EmailActionsProps) {
   return (
     <div className="flex flex-wrap items-center gap-3">
@@ -60,7 +62,7 @@ export default function EmailActions({
 
       <button
         onClick={onSave}
-        disabled={!email || saving}
+        disabled={!email || saving || viewingSentEmail}
         className="flex items-center gap-2 rounded-md border border-gray-300 bg-white px-5 py-2.5 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:opacity-50"
       >
         {saving ? (

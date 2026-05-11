@@ -301,6 +301,7 @@ export default function GenieUserDetail({
           savedMessage={savedMessage}
           savingDraft={savingDraft}
           savedDraftMessage={savedDraftMessage}
+          viewingSentEmail={pastEmails.find((pe) => pe.email_id === selectedSavedEmailId)?.email_type === 'sent'}
         />
         <EmailPreview
           email={email}
