@@ -42,6 +42,7 @@ export interface Property {
   generated_at?: string;
   campaign_sent_date?: string | null;
   campaign_saved_date?: string | null;
+  source_labels?: string[];
 }
 
 export interface FilterOptions {
@@ -75,6 +76,23 @@ export interface PastEmail {
   subject: string;
   plain_text: string;
   email_type: 'sent' | 'saved';
+}
+
+export interface GuardrailCategory {
+  name: string;
+  label: string;
+  passed: boolean;
+  severity_score: number;
+  explanation: string;
+  remediation: string | null;
+}
+
+export interface GuardrailValidationResult {
+  categories: GuardrailCategory[];
+  aggregate_score: number;
+  overall_passed: boolean;
+  summary: string;
+  parse_error?: boolean;
 }
 
 export interface GenieColumn {

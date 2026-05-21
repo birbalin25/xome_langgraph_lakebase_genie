@@ -2,6 +2,7 @@ import type {
   FilterOptions,
   GeneratedEmail,
   GenieQueryResponse,
+  GuardrailValidationResult,
   PastEmail,
   Property,
   UserProfile,
@@ -48,9 +49,21 @@ export async function fetchUserProfile(
   return json(res);
 }
 
+export async function fetchPropertiesBatch(
+  propertyIds: string[]
+): Promise<Property[]> {
+  const res = await fetch(`${BASE}/properties/batch`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ property_ids: propertyIds }),
+  });
+  const data = await json<{ properties: Property[] }>(res);
+  return data.properties;
+}
+
 export async function fetchListings(
   userId: string,
-  filters?: { city?: string; state?: string; listing_count?: number; model?: string }
+  filters?: { city?: string; state?: string; listing_count?: number; model?: string; models?: string[] }
 ): Promise<Property[]> {
   const res = await fetch(`${BASE}/users/${userId}/listings`, {
     method: "POST",
@@ -110,6 +123,18 @@ export async function refineEmail(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+  });
+  return json(res);
+}
+
+export async function validateEmail(
+  subject: string,
+  plainText: string
+): Promise<GuardrailValidationResult> {
+  const res = await fetch(`${BASE}/validate-email`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ subject, plain_text: plainText }),
   });
   return json(res);
 }

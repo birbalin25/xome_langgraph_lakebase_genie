@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import type {
   FilterState,
   GeneratedEmail,
+  GuardrailValidationResult,
   PastEmail,
   Property,
   UserProfile,
@@ -12,6 +13,7 @@ import UserProfileCard from "../users/UserProfileCard";
 import PropertyGrid from "../properties/PropertyGrid";
 import EmailActions from "../email/EmailActions";
 import EmailPreview from "../email/EmailPreview";
+import GuardrailValidation from "../email/GuardrailValidation";
 import PropertyDetailModal from "../properties/PropertyDetailModal";
 
 interface GenieUserDetailProps {
@@ -41,6 +43,14 @@ export default function GenieUserDetail({
   const [modalProperty, setModalProperty] = useState<Property | null>(null);
   const [pastEmails, setPastEmails] = useState<PastEmail[]>([]);
   const [selectedSavedEmailId, setSelectedSavedEmailId] = useState<number | null>(null);
+  const [loadingEmail, setLoadingEmail] = useState(false);
+  const [loadEmailMessage, setLoadEmailMessage] = useState("");
+  const [emailInitialTab, setEmailInitialTab] = useState<"html" | "plain" | undefined>(undefined);
+  const [emailIsGenerated, setEmailIsGenerated] = useState(false);
+  const [guardrailResult, setGuardrailResult] = useState<GuardrailValidationResult | null>(null);
+  const [guardrailValidating, setGuardrailValidating] = useState(false);
+  const [guardrailContentHash, setGuardrailContentHash] = useState("");
+  const [guardrailCached, setGuardrailCached] = useState(false);
 
   // Fetch profile + listings
   const loadData = useCallback(async () => {
@@ -90,6 +100,10 @@ export default function GenieUserDetail({
     setSavedMessage("");
     setSavedDraftMessage("");
     setSelectedSavedEmailId(null);
+    setEmailIsGenerated(true);
+    setGuardrailResult(null);
+    setGuardrailContentHash("");
+    setGuardrailCached(false);
     try {
       const recentPast = pastEmails.length > 0
         ? { subject: pastEmails[0].subject, plain_text: pastEmails[0].plain_text, saved_at: pastEmails[0].saved_at }
@@ -222,6 +236,117 @@ export default function GenieUserDetail({
     }
   }, [userId, selectedProperties, selectedPropertyIds, filters]);
 
+  const handleValidateEmail = useCallback(async (force?: boolean) => {
+    if (!email) return;
+    const subject = email.subject;
+    const plainText = email.plain_text;
+    const str = subject + "\x00" + plainText;
+    let h = 5381;
+    for (let i = 0; i < str.length; i++) {
+      h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+    }
+    const hash = String(h >>> 0);
+    if (!force && hash === guardrailContentHash && guardrailResult) {
+      setGuardrailCached(true);
+      return;
+    }
+    setGuardrailValidating(true);
+    setGuardrailCached(false);
+    try {
+      const result = await api.validateEmail(subject, plainText);
+      setGuardrailResult(result);
+      setGuardrailContentHash(hash);
+      setGuardrailCached(false);
+    } catch (err) {
+      console.error("Failed to validate email", err);
+    } finally {
+      setGuardrailValidating(false);
+    }
+  }, [email, guardrailContentHash, guardrailResult]);
+
+  const handleConfirmSend = useCallback(async () => {
+    if (!email || !userId) return;
+    setSaving(true);
+    try {
+      const result = await api.saveEmail({
+        user_id: userId,
+        subject: email.subject,
+        plain_text: email.plain_text,
+        properties: selectedProperties.map((p) => ({
+          property_id: p.property_id,
+          recommendation_id: p.recommendation_id,
+        })),
+        saved_email_id: selectedSavedEmailId || undefined,
+      });
+      setSavedMessage(result.message);
+
+      if (selectedSavedEmailId) {
+        setPastEmails((prev) => prev.filter((pe) => pe.email_id !== selectedSavedEmailId));
+      }
+      setSelectedSavedEmailId(null);
+      setGuardrailResult(null);
+      setGuardrailContentHash("");
+      setGuardrailCached(false);
+
+      const today = new Date().toISOString().split("T")[0];
+      setProperties((prev) =>
+        prev.map((p) =>
+          selectedPropertyIds.has(p.property_id)
+            ? { ...p, campaign_sent_date: p.campaign_sent_date ?? today }
+            : p
+        )
+      );
+
+      api
+        .fetchPastEmails(userId, selectedProperties.map((p) => p.property_id))
+        .then((emails) => setPastEmails(emails))
+        .catch(() => {});
+    } catch (err) {
+      console.error("Failed to send email", err);
+    } finally {
+      setSaving(false);
+    }
+  }, [email, userId, selectedProperties, selectedPropertyIds, selectedSavedEmailId]);
+
+  const handleLoadEmail = useCallback(async () => {
+    if (!userId || selectedProperties.length === 0) return;
+    setLoadingEmail(true);
+    setLoadEmailMessage("");
+    try {
+      const emails = await api.fetchPastEmails(
+        userId,
+        selectedProperties.map((p) => p.property_id)
+      );
+      setPastEmails(emails);
+      if (emails.length === 0) {
+        setLoadEmailMessage("No saved emails found");
+        setTimeout(() => setLoadEmailMessage(""), 3000);
+      } else {
+        const latest = emails[0];
+        setEmail({
+          subject: latest.subject,
+          html: "",
+          plain_text: latest.plain_text,
+          raw: "",
+        });
+        setEmailInitialTab("plain");
+        setEmailIsGenerated(false);
+        setSelectedSavedEmailId(null);
+        setSavedMessage("");
+        setSavedDraftMessage("");
+        setGuardrailResult(null);
+        setGuardrailContentHash("");
+        setGuardrailCached(false);
+      }
+    } catch (err) {
+      console.error("Failed to load emails", err);
+      setLoadEmailMessage("Failed to load emails");
+      setTimeout(() => setLoadEmailMessage(""), 3000);
+    } finally {
+      setLoadingEmail(false);
+    }
+  }, [userId, selectedProperties]);
+
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center">
@@ -294,20 +419,41 @@ export default function GenieUserDetail({
           properties={selectedProperties}
           email={email}
           onGenerate={handleGenerateEmail}
-          onSave={handleSaveEmail}
+          onSave={() => handleValidateEmail()}
           onSaveDraft={handleSaveDraft}
+          onLoadEmail={handleLoadEmail}
           generating={generating}
-          saving={saving}
+          saving={saving || guardrailValidating}
           savedMessage={savedMessage}
           savingDraft={savingDraft}
           savedDraftMessage={savedDraftMessage}
+          loadingEmail={loadingEmail}
+          loadEmailMessage={loadEmailMessage}
           viewingSentEmail={pastEmails.find((pe) => pe.email_id === selectedSavedEmailId)?.email_type === 'sent'}
+        />
+        <GuardrailValidation
+          result={guardrailResult}
+          validating={guardrailValidating}
+          cached={guardrailCached}
+          contentChanged={(() => {
+            if (!guardrailResult || !email) return false;
+            const str = email.subject + "\x00" + email.plain_text;
+            let h = 5381;
+            for (let i = 0; i < str.length; i++) {
+              h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+            }
+            return String(h >>> 0) !== guardrailContentHash;
+          })()}
+          onConfirmSend={handleConfirmSend}
+          onRetry={() => handleValidateEmail(true)}
         />
         <EmailPreview
           email={email}
           properties={properties}
           onPropertyClick={(p) => setModalProperty(p)}
           pastEmails={pastEmails}
+          initialTab={emailInitialTab}
+          showCurrentEmailOption={emailIsGenerated}
           onUpdatePlainText={(text) => {
             if (email) setEmail({ ...email, plain_text: text });
           }}

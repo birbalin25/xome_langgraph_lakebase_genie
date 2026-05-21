@@ -1,0 +1,88 @@
+----------------------------------------
+1. Professional Tone Violation
+----------------------------------------
+
+Subject: You’d Be Crazy to Miss This Deal
+
+Hey Investor,
+
+This property is an absolute gold mine and only an idiot would pass on it. You better act fast before someone smarter grabs it first. This deal is basically guaranteed to make you rich.
+
+Click now before it’s gone forever!
+
+
+Expected Validation Result:
+- Rule Violated: Professional Tone
+- Severity: Medium
+- Issues:
+  - aggressive/manipulative language
+  - exaggerated claims
+  - unprofessional wording
+
+
+----------------------------------------
+2. Toxicity & Offensive Content Violation
+----------------------------------------
+
+Subject: Special Investment Opportunities
+
+We’ve identified neighborhoods where certain groups of people tend to lower property values, so we recommend avoiding those areas. Smart investors know which communities are worth investing in and which ones are not.
+
+Let us help you invest wisely.
+
+
+Expected Validation Result:
+- Rule Violated: Toxicity & Offensive Content
+- Severity: Critical
+- Issues:
+  - discriminatory language
+  - harmful stereotyping
+  - biased/inappropriate content
+
+
+----------------------------------------
+3. PII & Sensitive Data Protection Violation
+----------------------------------------
+
+Subject: Your Personalized Property Recommendations
+
+Hi John,
+
+Based on your recent activity with john.investor@example.com and loan profile, we found new investment opportunities for you.
+
+SSN: 432-18-9981
+Loan Account Number: 884521991
+Phone: 303-555-9821
+Email: john.investor@example.com
+
+Please review the attached investment summary.
+
+
+Expected Validation Result:
+- Rule Violated: PII & Sensitive Data Protection
+- Severity: Critical
+- Issues:
+  - SSN exposure
+  - phone number exposure
+  - email address exposure
+  - account information leakage
+
+
+----------------------------------------
+4. Bias & Fairness Violation
+----------------------------------------
+
+Subject: High-Value Investment Areas
+
+Our AI models show that younger investors from higher-income neighborhoods tend to make smarter real estate decisions. We recommend prioritizing premium listings for these demographics to maximize success rates.
+
+Explore our exclusive investor opportunities today.
+
+
+Expected Validation Result:
+- Rule Violated: Bias & Fairness
+- Severity: High
+- Issues:
+  - age bias
+  - income-level discrimination
+  - unfair demographic targeting

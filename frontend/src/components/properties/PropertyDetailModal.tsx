@@ -54,6 +54,28 @@ export default function PropertyDetailModal({ property: p, onClose }: PropertyDe
             {p.neighborhood} &middot; {p.city}, {p.state} {p.zip_code}
           </p>
 
+          {/* Source labels */}
+          {p.source_labels && p.source_labels.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {p.source_labels.map((label) => {
+                const cls =
+                  label === "Model A"
+                    ? "bg-blue-100 text-blue-700"
+                    : label === "Model B"
+                      ? "bg-green-100 text-green-700"
+                      : "bg-purple-100 text-purple-700";
+                return (
+                  <span
+                    key={label}
+                    className={`rounded-full px-2 py-0.5 text-xs font-medium ${cls}`}
+                  >
+                    {label}
+                  </span>
+                );
+              })}
+            </div>
+          )}
+
           {/* Key stats */}
           <div className="mt-4 grid grid-cols-3 gap-4 rounded-lg bg-gray-50 p-4">
             <div className="flex items-center gap-2">

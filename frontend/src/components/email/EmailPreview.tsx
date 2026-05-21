@@ -17,6 +17,8 @@ interface EmailPreviewProps {
   onUpdateSubject?: (subject: string) => void;
   onSelectPastEmail?: (emailId: number | null) => void;
   onDeleteSavedEmail?: (emailId: number) => void;
+  initialTab?: "html" | "plain";
+  showCurrentEmailOption?: boolean;
 }
 
 // Script injected into the iframe to intercept link clicks
@@ -77,6 +79,8 @@ export default function EmailPreview({
   onUpdateSubject,
   onSelectPastEmail,
   onDeleteSavedEmail,
+  initialTab,
+  showCurrentEmailOption = true,
 }: EmailPreviewProps) {
   const [tab, setTab] = useState<"html" | "plain">("html");
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -109,6 +113,11 @@ export default function EmailPreview({
     setRefinePrompt("");
     setRefining(false);
   }, [email]);
+
+  // Switch tab when initialTab prop changes
+  useEffect(() => {
+    if (initialTab) setTab(initialTab);
+  }, [initialTab]);
 
   // When pastEmails list changes (after send/save/draft), reset if viewed email is gone
   useEffect(() => {
@@ -335,10 +344,12 @@ export default function EmailPreview({
               <select
                 key={pastEmails.map((pe) => `${pe.email_id ?? ''}_${pe.email_type}`).join(',')}
                 onChange={handleDropdownChange}
-                defaultValue="__current__"
+                defaultValue={showCurrentEmailOption ? "__current__" : "0"}
                 className="rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 focus:border-xome-500 focus:outline-none focus:ring-1 focus:ring-xome-500"
               >
-                <option value="__current__">Current email</option>
+                {showCurrentEmailOption && (
+                  <option value="__current__">Current email</option>
+                )}
                 {pastEmails.map((pe, i) => (
                   <option key={i} value={i}>
                     {pe.email_type === 'saved'

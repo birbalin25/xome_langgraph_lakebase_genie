@@ -1,5 +1,6 @@
 """REST API router for the campaign dashboard UI."""
 
+import json
 import logging
 import re
 from typing import Optional
@@ -8,6 +9,10 @@ from fastapi import APIRouter, HTTPException
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
 
+from agent_server.guardrail_prompts import (
+    GUARDRAIL_HUMAN_TEMPLATE,
+    GUARDRAIL_SYSTEM_PROMPT,
+)
 from agent_server.refine_email_prompts import REFINE_EMAIL_SYSTEM_PROMPT
 from agent_server.tools import _execute_sql
 
@@ -61,11 +66,20 @@ class DeleteSavedEmailRequest(BaseModel):
     email_id: int
 
 
+class BatchPropertiesRequest(BaseModel):
+    property_ids: list[str]
+
+
 class RefineEmailRequest(BaseModel):
     subject: str
     plain_text: str
     prompt: str
     previous_email: Optional[PreviousEmail] = None
+
+
+class ValidateEmailRequest(BaseModel):
+    subject: str
+    plain_text: str
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -166,6 +180,32 @@ async def get_property(property_id: str):
         raise
     except Exception as e:
         logger.exception("Failed to fetch property")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/properties/batch")
+async def get_properties_batch(req: BatchPropertiesRequest):
+    """Return full details for multiple properties by ID."""
+    if not req.property_ids:
+        return {"properties": []}
+    # Limit to 100 IDs to prevent overly large queries
+    ids = req.property_ids[:100]
+    escaped_ids = ", ".join(f"'{pid}'" for pid in ids)
+    query = f"""
+    SELECT property_id, address, city, state, zip_code,
+           price, beds, baths, sqft, property_type,
+           year_built, school_rating, neighborhood,
+           listing_status, days_on_market,
+           auction_date, auction_start_price,
+           hoa_fee, description, image_url
+    FROM properties
+    WHERE property_id IN ({escaped_ids})
+    """
+    try:
+        rows = _execute_sql(query)
+        return {"properties": rows}
+    except Exception as e:
+        logger.exception("Failed to fetch properties batch")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -469,4 +509,48 @@ async def refine_email(req: RefineEmailRequest):
         return {"subject": subject, "plain_text": plain_text}
     except Exception as e:
         logger.exception("Failed to refine email")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/validate-email")
+async def validate_email(req: ValidateEmailRequest):
+    """Validate an email against guardrail categories using LLM."""
+    from agent_server.agent import get_llm
+
+    _FAILSAFE = {
+        "categories": [
+            {"name": "professional_tone", "label": "Professional Tone", "passed": False, "severity_score": 0, "explanation": "Validation could not be completed.", "remediation": "Please retry."},
+            {"name": "toxicity", "label": "Toxicity & Offensive Content", "passed": False, "severity_score": 0, "explanation": "Validation could not be completed.", "remediation": "Please retry."},
+            {"name": "pii", "label": "PII & Sensitive Data", "passed": False, "severity_score": 0, "explanation": "Validation could not be completed.", "remediation": "Please retry."},
+            {"name": "bias", "label": "Bias & Fairness", "passed": False, "severity_score": 0, "explanation": "Validation could not be completed.", "remediation": "Please retry."},
+        ],
+        "aggregate_score": 0,
+        "overall_passed": False,
+        "summary": "Validation could not be completed — please retry.",
+        "parse_error": True,
+    }
+
+    human = GUARDRAIL_HUMAN_TEMPLATE.format(
+        subject=req.subject, plain_text=req.plain_text
+    )
+
+    try:
+        llm = get_llm()
+        response = await llm.ainvoke([
+            SystemMessage(content=GUARDRAIL_SYSTEM_PROMPT),
+            HumanMessage(content=human),
+        ])
+        raw = response.content
+
+        # Strip markdown code fences if present
+        cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip())
+        cleaned = re.sub(r"\s*```$", "", cleaned.strip())
+
+        result = json.loads(cleaned)
+        return result
+    except json.JSONDecodeError:
+        logger.warning("Guardrail LLM returned non-JSON response: %s", raw[:500])
+        return _FAILSAFE
+    except Exception as e:
+        logger.exception("Failed to validate email")
         raise HTTPException(status_code=500, detail=str(e))

@@ -72,6 +72,7 @@ Browser → FastAPI (port 8000) → serves frontend/dist/ (static) + REST API (/
 - Config constants: `agent_server/config.py`
 - Prompts: `agent_server/prompts.py`
 - Refine email prompts: `agent_server/refine_email_prompts.py`
+- Guardrail prompts: `agent_server/guardrail_prompts.py`
 - Server entry point: `agent_server/start_server.py`
 - Frontend (React): `frontend/`
 - Frontend components: `frontend/src/components/`
@@ -121,6 +122,8 @@ Browser → FastAPI (port 8000) → serves frontend/dist/ (static) + REST API (/
 
 **Refine with AI** — In the plain text editor, users can click "Refine with AI" to open a prompt bar. The prompt + current email text are sent to the LLM via `/refine-email`, which returns an updated subject and plain text. Previous email context is included for continuity.
 
+**Guardrail validation** — Before sending an email, the "Validate & Send" flow calls `/api/campaign/validate-email`, which sends the subject + plain text to the LLM with a compliance prompt (`guardrail_prompts.py`). The LLM scores four categories (professional tone, toxicity, PII, bias) as JSON. The frontend `GuardrailValidation.tsx` renders a 2x2 card grid with severity scores. If all categories pass (severity ≤ 50) and aggregate score ≤ 50, a "Confirm & Send" button appears. Content changes after validation show a re-validate warning. Parse failures from the LLM return a failsafe response with `parse_error: true`.
+
 ## Critical Rules
 
 - Campaign email properties come ONLY from the `recommendations` table. Browsing data is for personalization context only.
@@ -156,6 +159,7 @@ Six tables in Lakebase (PostgreSQL). First four seeded by notebooks, last two au
 | `POST` | `/api/campaign/save-draft` | Save draft — persists without marking as sent |
 | `POST` | `/api/campaign/delete-saved-email` | Soft-delete a saved email |
 | `POST` | `/api/campaign/refine-email` | Refine email subject + plain text via LLM |
+| `POST` | `/api/campaign/validate-email` | Guardrail validation — scores tone, toxicity, PII, bias |
 
 ## Configuration
 

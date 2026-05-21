@@ -5,6 +5,7 @@ import type {
   GenieColumn,
   Property,
 } from "../../types";
+import type { OtfGenieData } from "../genie/GenieResultTable";
 import * as api from "../../api/campaign";
 import FilterPanel from "../filters/FilterPanel";
 import GenieSearchBar from "../genie/GenieSearchBar";
@@ -37,11 +38,20 @@ export default function AppShell() {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [genieError, setGenieError] = useState("");
 
+  // ── OTF results state (lifted so it persists across view switches) ──
+  const [otfColumns, setOtfColumns] = useState<GenieColumn[]>([]);
+  const [otfRows, setOtfRows] = useState<(string | null)[][]>([]);
+  const [otfDescription, setOtfDescription] = useState("");
+  const [otfNlQuery, setOtfNlQuery] = useState("");
+  const [tableSelectedUserIds, setTableSelectedUserIds] = useState<Set<string>>(new Set());
+
   // ── View state ──────────────────────────────
   const [view, setView] = useState<"list" | "detail" | "multi-detail">("list");
   const [selectedUserId, setSelectedUserId] = useState("");
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
-  const [selectedModel, setSelectedModel] = useState("");
+  const [selectedModels, setSelectedModels] = useState<string[]>([]);
+  const [otfGenieData, setOtfGenieData] = useState<OtfGenieData | undefined>();
+  const [otfUserIds, setOtfUserIds] = useState<string[]>([]);
 
   // ── Property modal state ──────────────────
   const [modalProperty, setModalProperty] = useState<Property | null>(null);
@@ -74,6 +84,12 @@ export default function AppShell() {
         setGenieRows(result.rows);
         setGenieDescription(result.description || "");
         setConversationId(result.conversation_id);
+        // Clear OTF results and selections on new main search
+        setOtfColumns([]);
+        setOtfRows([]);
+        setOtfDescription("");
+        setOtfNlQuery("");
+        setTableSelectedUserIds(new Set());
         if (result.error) {
           setGenieError(result.error);
         }
@@ -95,7 +111,36 @@ export default function AppShell() {
     setGenieRows([]);
     setGenieDescription("");
     setGenieError("");
+    setOtfColumns([]);
+    setOtfRows([]);
+    setOtfDescription("");
+    setOtfNlQuery("");
+    setTableSelectedUserIds(new Set());
     setView("list");
+  }, []);
+
+  // ── OTF search handler ─────────────────────
+  const handleOtfSearch = useCallback(
+    async (query: string) => {
+      setOtfNlQuery(query);
+      try {
+        const result = await api.queryGenie(query, null);
+        setOtfColumns(result.columns);
+        setOtfRows(result.rows);
+        setOtfDescription(result.description || "");
+      } catch (err) {
+        console.error("OTF Genie query failed", err);
+      }
+    },
+    []
+  );
+
+  // ── Clear OTF results ─────────────────────
+  const handleOtfClear = useCallback(() => {
+    setOtfColumns([]);
+    setOtfRows([]);
+    setOtfDescription("");
+    setOtfNlQuery("");
   }, []);
 
   // ── Select user → detail view (kept for backward compat) ──
@@ -106,9 +151,11 @@ export default function AppShell() {
 
   // ── Multi-user → multi-detail view ────────
   const handleViewRecommendations = useCallback(
-    (userIds: string[], model: string) => {
+    (userIds: string[], models: string[], otfData?: OtfGenieData, otfUids?: string[]) => {
       setSelectedUserIds(userIds);
-      setSelectedModel(model);
+      setSelectedModels(models);
+      setOtfGenieData(otfData);
+      setOtfUserIds(otfUids || []);
       setView("multi-detail");
     },
     []
@@ -168,13 +215,24 @@ export default function AppShell() {
               description={genieDescription}
               onViewRecommendations={handleViewRecommendations}
               onSelectProperty={handleSelectProperty}
+              otfColumns={otfColumns}
+              otfRows={otfRows}
+              otfDescription={otfDescription}
+              otfNlQuery={otfNlQuery}
+              onOtfNlQueryChange={setOtfNlQuery}
+              onOtfSearch={handleOtfSearch}
+              onOtfClear={handleOtfClear}
+              selectedUserIds={tableSelectedUserIds}
+              onSelectedUserIdsChange={setTableSelectedUserIds}
             />
           ) : view === "multi-detail" ? (
             <GenieMultiUserDetail
               userIds={selectedUserIds}
-              model={selectedModel}
+              models={selectedModels}
               filters={filters}
               onBack={handleBack}
+              otfGenieData={otfGenieData}
+              otfUserIds={otfUserIds}
             />
           ) : (
             <GenieUserDetail
