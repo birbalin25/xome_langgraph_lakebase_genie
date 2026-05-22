@@ -124,6 +124,8 @@ Browser → FastAPI (port 8000) → serves frontend/dist/ (static) + REST API (/
 
 **Guardrail validation** — Before sending an email, the "Validate & Send" flow calls `/api/campaign/validate-email`, which sends the subject + plain text to the LLM with a compliance prompt (`guardrail_prompts.py`). The LLM scores four categories (professional tone, toxicity, PII, bias) as JSON. The frontend `GuardrailValidation.tsx` renders a 2x2 card grid with severity scores. If all categories pass (severity ≤ 50) and aggregate score ≤ 50, a "Confirm & Send" button appears. Content changes after validation show a re-validate warning. Parse failures from the LLM return a failsafe response with `parse_error: true`.
 
+**Auto-Fix with AI** — When guardrail validation fails, an "Auto-Fix with AI" button appears. It calls `/api/campaign/fix-email` with the current email and the failed categories (name, label, explanation, remediation). The backend feeds these into the refine prompt, and the LLM rewrites the email to address all flagged issues. The fixed email replaces the editor content for re-validation.
+
 ## Critical Rules
 
 - Campaign email properties come ONLY from the `recommendations` table. Browsing data is for personalization context only.
@@ -160,6 +162,8 @@ Six tables in Lakebase (PostgreSQL). First four seeded by notebooks, last two au
 | `POST` | `/api/campaign/delete-saved-email` | Soft-delete a saved email |
 | `POST` | `/api/campaign/refine-email` | Refine email subject + plain text via LLM |
 | `POST` | `/api/campaign/validate-email` | Guardrail validation — scores tone, toxicity, PII, bias |
+| `POST` | `/api/campaign/fix-email` | Auto-fix email to address failed guardrail categories via LLM |
+| `POST` | `/api/campaign/properties/batch` | Full details for multiple properties by ID (max 100) |
 
 ## Configuration
 

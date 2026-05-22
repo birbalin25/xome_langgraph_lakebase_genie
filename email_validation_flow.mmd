@@ -1,0 +1,96 @@
+---
+config:
+  theme: default
+  themeVariables:
+    fontSize: 14px
+---
+flowchart TD
+    %% Styling
+    classDef userAction fill:#ADD8E6,stroke:#4682B4,stroke-width:2px,color:#000
+    classDef frontend fill:#E8E8E8,stroke:#666,stroke-width:2px,color:#000
+    classDef backend fill:#FFD7A6,stroke:#FF8C00,stroke-width:2px,color:#000
+    classDef llm fill:#E6D5FF,stroke:#8B4FDB,stroke-width:2px,color:#000
+    classDef decision fill:#FFF4B3,stroke:#FFD700,stroke-width:2px,color:#000
+    classDef success fill:#C8F7C5,stroke:#28A745,stroke-width:2px,color:#000
+    classDef failure fill:#FFD9CC,stroke:#DC3545,stroke-width:2px,color:#000
+
+    Start([User clicks 'Validate & Send' button]):::userAction
+
+    HandleValidate[Frontend: handleValidateEmail<br/>in GenieMultiUserDetail/GenieUserDetail]:::frontend
+
+    ExtractContent[Frontend: getEffectiveContent<br/>extracts subject + plain_text]:::frontend
+
+    ComputeHash[Frontend: Compute content hash<br/>DJB2 algorithm]:::frontend
+
+    CacheCheck{Does hash match<br/>cached guardrail result?}:::decision
+
+    ShowCached[Show cached result<br/>Skip LLM call]:::frontend
+
+    APICall[Frontend: POST /api/campaign/validate-email<br/>with subject, plain_text]:::frontend
+
+    Backend[Backend: campaign_api.py<br/>Format prompt using GUARDRAIL_SYSTEM_PROMPT<br/>+ GUARDRAIL_HUMAN_TEMPLATE]:::backend
+
+    LLM[Backend: Claude LLM via get_llm.ainvoke<br/>Process validation request]:::llm
+
+    ParseCheck{Is JSON<br/>parseable?}:::decision
+
+    Failsafe[Return failsafe response<br/>with parse_error: true]:::failure
+
+    RetryBanner[Frontend: Show 'Retry' banner]:::failure
+
+    ReceiveResult[Frontend: Receive GuardrailValidationResult<br/>4 categories in 2x2 card grid:<br/>• Professional Tone severity 0-100<br/>• Toxicity & Offensive Content severity 0-100<br/>• PII & Sensitive Data severity 0-100<br/>• Bias & Fairness severity 0-100]:::frontend
+
+    ContentChanged{Did content change<br/>after validation?}:::decision
+
+    ShowWarning[Show 'Content updated<br/>— re-validate' warning]:::failure
+
+    PassCheck{overall_passed = true<br/>AND aggregate_score ≤ 50?}:::decision
+
+    ShowFailed[Show failed categories<br/>with remediation suggestions<br/>Display 'Re-validate' button]:::failure
+
+    ShowConfirm[Show 'Confirm & Send' button]:::success
+
+    ConfirmClick([User clicks 'Confirm & Send']):::userAction
+
+    SendEmail[Frontend: handleConfirmSend<br/>POST /api/campaign/save-email<br/>Email sent & persisted to Lakebase]:::backend
+
+    Complete([Email Sent Successfully]):::success
+
+    Revalidate([User clicks 'Re-validate']):::userAction
+
+    %% Flow connections
+    Start --> HandleValidate
+    HandleValidate --> ExtractContent
+    ExtractContent --> ComputeHash
+    ComputeHash --> CacheCheck
+
+    CacheCheck -->|YES| ShowCached
+    CacheCheck -->|NO| APICall
+
+    ShowCached --> ReceiveResult
+
+    APICall --> Backend
+    Backend --> LLM
+    LLM --> ParseCheck
+
+    ParseCheck -->|NO| Failsafe
+    Failsafe --> RetryBanner
+    RetryBanner --> APICall
+
+    ParseCheck -->|YES| ReceiveResult
+
+    ReceiveResult --> ContentChanged
+
+    ContentChanged -->|YES| ShowWarning
+    ContentChanged -->|NO| PassCheck
+    ShowWarning --> PassCheck
+
+    PassCheck -->|NO| ShowFailed
+    PassCheck -->|YES| ShowConfirm
+
+    ShowFailed --> Revalidate
+    Revalidate --> APICall
+
+    ShowConfirm --> ConfirmClick
+    ConfirmClick --> SendEmail
+    SendEmail --> Complete

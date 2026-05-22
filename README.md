@@ -26,10 +26,12 @@ An AI-powered real estate campaign tool that generates personalized emails promo
 4. Preview the email (HTML or plain text), click property links to see detail modals
 5. **Edit** the plain text directly or use **Refine with AI** to modify the email via an LLM prompt
 6. Click **Save Email** to save a draft — drafts accumulate, and the "Email saved on" timestamp always updates to the latest save time
-7. Click **Send Email** to persist and track the campaign; if viewing a saved draft, that draft is marked as sent
-8. **Delete** saved drafts via the Delete button with confirmation dialog — also clears the "Email saved on" banner from property cards
-9. Properties already sent in a campaign display a **"Campaign sent on {timestamp}"** banner; saved drafts show **"Email saved on {timestamp}"** with full date + time
-10. Load previous emails from the **dropdown** in the plain text tab to review or re-send
+7. Click **Validate & Send** — runs guardrail validation (professional tone, toxicity, PII, bias) via Claude. A 2x2 card grid shows severity scores for each category
+8. If all checks pass (severity ≤ 50, aggregate ≤ 50), click **Confirm & Send** to persist and track the campaign; if viewing a saved draft, that draft is marked as sent
+9. If validation fails, click **Auto-Fix with AI** — the LLM rewrites the email to address flagged issues, then re-validate
+10. **Delete** saved drafts via the Delete button with confirmation dialog — also clears the "Email saved on" banner from property cards
+11. Properties already sent in a campaign display a **"Campaign sent on {timestamp}"** banner; saved drafts show **"Email saved on {timestamp}"** with full date + time
+12. Load previous emails from the **Load Email** button to review or re-send
 
 **Critical rule:** Campaign properties come exclusively from the `recommendations` table. Browsing data is used for personalization tone only.
 
@@ -90,6 +92,9 @@ All endpoints are prefixed with `/api/campaign`.
 | `POST` | `/save-draft` | Save draft — accumulates, updates tracking timestamp |
 | `POST` | `/delete-saved-email` | Soft-delete a saved email + clear campaign tracking |
 | `POST` | `/refine-email` | Refine email subject + plain text via LLM |
+| `POST` | `/validate-email` | Guardrail validation — scores tone, toxicity, PII, bias |
+| `POST` | `/fix-email` | Auto-fix email to address failed guardrail categories via LLM |
+| `POST` | `/properties/batch` | Full details for multiple properties by ID (max 100) |
 
 ---
 
@@ -124,6 +129,7 @@ agent_server/
   tools.py             # Lakebase helper (psycopg2 + connection pooling)
   prompts.py           # LLM prompt templates
   refine_email_prompts.py  # Refine with AI prompt
+  guardrail_prompts.py # Guardrail validation prompt
   config.py            # Configuration constants
   start_server.py      # FastAPI entry point + lifespan hooks
 frontend/
@@ -135,7 +141,7 @@ frontend/
       filters/         # FilterPanel
       users/           # UserProfileCard
       properties/      # PropertyCard, PropertyGrid, PropertyDetailModal
-      email/           # EmailPreview, EmailActions
+      email/           # EmailPreview, EmailActions, GuardrailValidation
     types/index.ts     # TypeScript interfaces
   dist/                # Built frontend (served as static files)
 data/

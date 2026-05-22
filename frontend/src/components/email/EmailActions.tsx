@@ -1,4 +1,4 @@
-import { Send, Mail, Loader2, Check, Save, FolderOpen } from "lucide-react";
+import { Send, Mail, Loader2, Save, FolderOpen } from "lucide-react";
 import type { GeneratedEmail } from "../../types";
 
 interface EmailActionsProps {
@@ -17,6 +17,7 @@ interface EmailActionsProps {
   loadingEmail: boolean;
   loadEmailMessage: string;
   viewingSentEmail?: boolean;
+  saveEmailDisabled?: boolean;
 }
 
 export default function EmailActions({
@@ -35,6 +36,7 @@ export default function EmailActions({
   loadingEmail,
   loadEmailMessage,
   viewingSentEmail,
+  saveEmailDisabled,
 }: EmailActionsProps) {
   return (
     <div className="flex flex-wrap items-center gap-3">
@@ -53,17 +55,15 @@ export default function EmailActions({
 
       <button
         onClick={onSaveDraft}
-        disabled={!email || savingDraft}
+        disabled={!email || savingDraft || saveEmailDisabled}
         className="flex items-center gap-2 rounded-md border border-gray-300 bg-white px-5 py-2.5 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:opacity-50"
       >
         {savingDraft ? (
           <Loader2 className="h-4 w-4 animate-spin" />
-        ) : savedDraftMessage ? (
-          <Check className="h-4 w-4 text-green-600" />
         ) : (
           <Save className="h-4 w-4" />
         )}
-        {savingDraft ? "Saving..." : savedDraftMessage ? "Saved" : "Save Email"}
+        {savingDraft ? "Saving..." : "Save Email"}
       </button>
 
       <button
@@ -86,12 +86,10 @@ export default function EmailActions({
       >
         {saving ? (
           <Loader2 className="h-4 w-4 animate-spin" />
-        ) : savedMessage ? (
-          <Check className="h-4 w-4 text-green-600" />
         ) : (
           <Send className="h-4 w-4" />
         )}
-        {saving ? "Validating..." : savedMessage ? "Sent" : "Validate & Send"}
+        {saving ? "Validating..." : "Validate & Send"}
       </button>
 
       {loadEmailMessage && (

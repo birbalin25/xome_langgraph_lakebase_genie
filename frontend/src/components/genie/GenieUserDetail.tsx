@@ -51,6 +51,9 @@ export default function GenieUserDetail({
   const [guardrailValidating, setGuardrailValidating] = useState(false);
   const [guardrailContentHash, setGuardrailContentHash] = useState("");
   const [guardrailCached, setGuardrailCached] = useState(false);
+  const [fixing, setFixing] = useState(false);
+  const [loadedEmailType, setLoadedEmailType] = useState<string | null>(null);
+  const [loadedEmailOriginal, setLoadedEmailOriginal] = useState<{ subject: string; plain_text: string } | null>(null);
 
   // Fetch profile + listings
   const loadData = useCallback(async () => {
@@ -104,6 +107,8 @@ export default function GenieUserDetail({
     setGuardrailResult(null);
     setGuardrailContentHash("");
     setGuardrailCached(false);
+    setLoadedEmailType(null);
+    setLoadedEmailOriginal(null);
     try {
       const recentPast = pastEmails.length > 0
         ? { subject: pastEmails[0].subject, plain_text: pastEmails[0].plain_text, saved_at: pastEmails[0].saved_at }
@@ -308,6 +313,35 @@ export default function GenieUserDetail({
     }
   }, [email, userId, selectedProperties, selectedPropertyIds, selectedSavedEmailId]);
 
+  const handleAutoFix = useCallback(async () => {
+    if (!email || !guardrailResult) return;
+    const failedCategories = guardrailResult.categories
+      .filter((c) => !c.passed && c.remediation)
+      .map((c) => ({
+        name: c.name,
+        label: c.label,
+        explanation: c.explanation,
+        remediation: c.remediation!,
+      }));
+    if (failedCategories.length === 0) return;
+    setFixing(true);
+    try {
+      const result = await api.fixEmail(
+        email.subject,
+        email.plain_text,
+        failedCategories
+      );
+      setEmail({ ...email, subject: result.subject, plain_text: result.plain_text });
+      setGuardrailResult(null);
+      setGuardrailContentHash("");
+      setGuardrailCached(false);
+    } catch (err) {
+      console.error("Failed to auto-fix email", err);
+    } finally {
+      setFixing(false);
+    }
+  }, [email, guardrailResult]);
+
   const handleLoadEmail = useCallback(async () => {
     if (!userId || selectedProperties.length === 0) return;
     setLoadingEmail(true);
@@ -337,6 +371,8 @@ export default function GenieUserDetail({
         setGuardrailResult(null);
         setGuardrailContentHash("");
         setGuardrailCached(false);
+        setLoadedEmailType(latest.email_type || null);
+        setLoadedEmailOriginal({ subject: latest.subject, plain_text: latest.plain_text });
       }
     } catch (err) {
       console.error("Failed to load emails", err);
@@ -430,6 +466,18 @@ export default function GenieUserDetail({
           loadingEmail={loadingEmail}
           loadEmailMessage={loadEmailMessage}
           viewingSentEmail={pastEmails.find((pe) => pe.email_id === selectedSavedEmailId)?.email_type === 'sent'}
+          saveEmailDisabled={(() => {
+            // Dropdown-selected sent email
+            if (pastEmails.find((pe) => pe.email_id === selectedSavedEmailId)?.email_type === 'sent') return true;
+            // Loaded email tracking
+            if (loadedEmailType && loadedEmailOriginal && email) {
+              if (loadedEmailType === 'sent') return true;
+              // Draft: disabled until content is modified
+              return email.subject === loadedEmailOriginal.subject &&
+                     email.plain_text === loadedEmailOriginal.plain_text;
+            }
+            return false;
+          })()}
         />
         <GuardrailValidation
           result={guardrailResult}
@@ -446,6 +494,8 @@ export default function GenieUserDetail({
           })()}
           onConfirmSend={handleConfirmSend}
           onRetry={() => handleValidateEmail(true)}
+          onAutoFix={handleAutoFix}
+          fixing={fixing}
         />
         <EmailPreview
           email={email}

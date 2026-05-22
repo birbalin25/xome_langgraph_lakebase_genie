@@ -82,6 +82,19 @@ class ValidateEmailRequest(BaseModel):
     plain_text: str
 
 
+class FailedCategory(BaseModel):
+    name: str
+    label: str
+    explanation: str
+    remediation: str
+
+
+class FixEmailRequest(BaseModel):
+    subject: str
+    plain_text: str
+    failed_categories: list[FailedCategory]
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 
@@ -553,4 +566,54 @@ async def validate_email(req: ValidateEmailRequest):
         return _FAILSAFE
     except Exception as e:
         logger.exception("Failed to validate email")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/fix-email")
+async def fix_email(req: FixEmailRequest):
+    """Auto-fix an email to address failed guardrail categories using LLM."""
+    from agent_server.agent import get_llm
+
+    # Build numbered fix instructions from failed categories
+    fix_instructions = []
+    for i, cat in enumerate(req.failed_categories, 1):
+        fix_instructions.append(
+            f"{i}. **{cat.label}** — {cat.explanation}\n"
+            f"   Fix: {cat.remediation}"
+        )
+
+    human = (
+        f"Here is the current email that FAILED guardrail validation:\n\n"
+        f"SUBJECT:\n{req.subject}\n\n"
+        f"PLAIN TEXT:\n{req.plain_text}\n\n"
+        f"---\n"
+        f"The email failed the following guardrail checks. "
+        f"Rewrite the email to fix ALL of the issues below while preserving "
+        f"the original intent, properties, and key information:\n\n"
+        + "\n\n".join(fix_instructions)
+    )
+
+    try:
+        llm = get_llm()
+        response = await llm.ainvoke([
+            SystemMessage(content=REFINE_EMAIL_SYSTEM_PROMPT),
+            HumanMessage(content=human),
+        ])
+        raw = response.content
+
+        # Parse subject
+        subject = req.subject
+        subject_match = re.search(r"SUBJECT:\s*\n?(.+?)(?:\n|$)", raw)
+        if subject_match:
+            subject = subject_match.group(1).strip()
+
+        # Parse plain text
+        plain_text = req.plain_text
+        plain_match = re.search(r"PLAIN TEXT:\s*\n(.*)", raw, re.DOTALL)
+        if plain_match:
+            plain_text = plain_match.group(1).strip()
+
+        return {"subject": subject, "plain_text": plain_text}
+    except Exception as e:
+        logger.exception("Failed to fix email")
         raise HTTPException(status_code=500, detail=str(e))

@@ -52,6 +52,9 @@ interface UserState {
   loadEmailMessage: string;
   emailInitialTab?: "html" | "plain";
   emailIsGenerated: boolean;
+  fixing: boolean;
+  loadedEmailType: string | null;
+  loadedEmailOriginal: { subject: string; plain_text: string } | null;
 }
 
 function makeInitialUserState(userId: string): UserState {
@@ -80,6 +83,9 @@ function makeInitialUserState(userId: string): UserState {
     loadEmailMessage: "",
     emailInitialTab: undefined,
     emailIsGenerated: false,
+    fixing: false,
+    loadedEmailType: null,
+    loadedEmailOriginal: null,
   };
 }
 
@@ -355,6 +361,8 @@ export default function GenieMultiUserDetail({
           guardrailResult: null,
           guardrailContentHash: "",
           guardrailCached: false,
+          loadedEmailType: null,
+          loadedEmailOriginal: null,
         });
         // Fetch past emails in the background
         api
@@ -499,6 +507,44 @@ export default function GenieMultiUserDetail({
       } catch (err) {
         console.error("Failed to send email", err);
         updateUser(idx, { saving: false });
+      }
+    },
+    [users, updateUser]
+  );
+
+  const handleAutoFix = useCallback(
+    async (idx: number) => {
+      const u = users[idx];
+      const effective = getEffectiveContent(u);
+      if (!effective || !u.guardrailResult) return;
+      const failedCategories = u.guardrailResult.categories
+        .filter((c) => !c.passed && c.remediation)
+        .map((c) => ({
+          name: c.name,
+          label: c.label,
+          explanation: c.explanation,
+          remediation: c.remediation!,
+        }));
+      if (failedCategories.length === 0) return;
+      updateUser(idx, { fixing: true });
+      try {
+        const result = await api.fixEmail(
+          effective.subject,
+          effective.plainText,
+          failedCategories
+        );
+        updateUser(idx, (prev) => ({
+          fixing: false,
+          email: prev.email
+            ? { ...prev.email, subject: result.subject, plain_text: result.plain_text }
+            : prev.email,
+          guardrailResult: null,
+          guardrailContentHash: "",
+          guardrailCached: false,
+        }));
+      } catch (err) {
+        console.error("Failed to auto-fix email", err);
+        updateUser(idx, { fixing: false });
       }
     },
     [users, updateUser]
@@ -684,6 +730,8 @@ export default function GenieMultiUserDetail({
             guardrailResult: null,
             guardrailContentHash: "",
             guardrailCached: false,
+            loadedEmailType: latest.email_type || null,
+            loadedEmailOriginal: { subject: latest.subject, plain_text: latest.plain_text },
           });
         }
       } catch (err) {
@@ -885,6 +933,15 @@ export default function GenieMultiUserDetail({
                         loadingEmail={u.loadingEmail}
                         loadEmailMessage={u.loadEmailMessage}
                         viewingSentEmail={u.pastEmails.find((pe) => pe.email_id === u.selectedSavedEmailId)?.email_type === 'sent'}
+                        saveEmailDisabled={(() => {
+                          if (u.pastEmails.find((pe) => pe.email_id === u.selectedSavedEmailId)?.email_type === 'sent') return true;
+                          if (u.loadedEmailType && u.loadedEmailOriginal && u.email) {
+                            if (u.loadedEmailType === 'sent') return true;
+                            return u.email.subject === u.loadedEmailOriginal.subject &&
+                                   u.email.plain_text === u.loadedEmailOriginal.plain_text;
+                          }
+                          return false;
+                        })()}
                       />
                       <GuardrailValidation
                         result={u.guardrailResult}
@@ -898,6 +955,8 @@ export default function GenieMultiUserDetail({
                         })()}
                         onConfirmSend={() => handleConfirmSend(idx)}
                         onRetry={() => handleValidateEmail(idx, true)}
+                        onAutoFix={() => handleAutoFix(idx)}
+                        fixing={u.fixing}
                       />
                       <EmailPreview
                         email={u.email}

@@ -31,7 +31,12 @@ GUARDRAIL_SYSTEM_PROMPT = (
     "- aggregate_score: weighted average of all four severity scores (equal weight).\n"
     "- If no issues found in a category, set severity_score to 0, passed to true, "
     "explanation to a brief positive note, and remediation to null.\n"
-    "- If issues found, provide a clear explanation and actionable remediation suggestion.\n\n"
+    "- If issues found, provide a clear explanation and a **concrete, actionable** remediation. "
+    "For PII violations, specify the exact text to redact and the placeholder to use "
+    "(e.g., 'replace john@example.com with [email]', 'replace 555-123-4567 with [phone]'). "
+    "For tone issues, quote the problematic phrase and suggest specific rephrasing. "
+    "For bias, quote the problematic text and suggest a neutral alternative. "
+    "Make every remediation detailed enough for an automated agent to apply the fix without ambiguity.\n\n"
     "## Required JSON Schema\n\n"
     "{\n"
     '  "categories": [\n'

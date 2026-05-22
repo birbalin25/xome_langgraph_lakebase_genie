@@ -127,6 +127,19 @@ export async function refineEmail(
   return json(res);
 }
 
+export async function fixEmail(
+  subject: string,
+  plainText: string,
+  failedCategories: Array<{ name: string; label: string; explanation: string; remediation: string }>
+): Promise<{ subject: string; plain_text: string }> {
+  const res = await fetch(`${BASE}/fix-email`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ subject, plain_text: plainText, failed_categories: failedCategories }),
+  });
+  return json(res);
+}
+
 export async function validateEmail(
   subject: string,
   plainText: string

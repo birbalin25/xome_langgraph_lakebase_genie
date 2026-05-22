@@ -6,6 +6,7 @@ import {
   RefreshCw,
   AlertTriangle,
   Send,
+  Sparkles,
 } from "lucide-react";
 import type { GuardrailValidationResult } from "../../types";
 
@@ -16,6 +17,8 @@ interface GuardrailValidationProps {
   contentChanged: boolean;
   onConfirmSend: () => void;
   onRetry: () => void;
+  onAutoFix?: () => void;
+  fixing?: boolean;
 }
 
 function severityColor(score: number): string {
@@ -39,6 +42,8 @@ export default function GuardrailValidation({
   contentChanged,
   onConfirmSend,
   onRetry,
+  onAutoFix,
+  fixing = false,
 }: GuardrailValidationProps) {
   // Loading state
   if (validating) {
@@ -159,6 +164,20 @@ export default function GuardrailValidation({
             <RefreshCw className="h-3.5 w-3.5" />
             Re-validate
           </button>
+          {!result.overall_passed && !contentChanged && onAutoFix && (
+            <button
+              onClick={onAutoFix}
+              disabled={fixing}
+              className="flex items-center gap-1.5 rounded-md bg-gradient-to-r from-purple-600 to-indigo-600 px-4 py-1.5 text-xs font-medium text-white shadow-sm transition hover:from-purple-700 hover:to-indigo-700 disabled:opacity-50"
+            >
+              {fixing ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5" />
+              )}
+              {fixing ? "Fixing..." : "Auto-Fix with AI"}
+            </button>
+          )}
           {result.overall_passed && !contentChanged && (
             <button
               onClick={onConfirmSend}
