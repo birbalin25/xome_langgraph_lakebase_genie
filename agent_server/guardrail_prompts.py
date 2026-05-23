@@ -61,3 +61,103 @@ GUARDRAIL_HUMAN_TEMPLATE = (
     "SUBJECT:\n{subject}\n\n"
     "PLAIN TEXT:\n{plain_text}"
 )
+
+
+# ── Shared fragments for per-category prompts ────────────────────────────────
+
+_GUARDRAIL_PREAMBLE = (
+    "You are a compliance validation engine for real estate campaign emails. "
+    "You evaluate an email against a SINGLE guardrail category and return a structured JSON assessment. "
+    "You MUST return raw JSON only — no markdown code fences, no commentary, no text outside the JSON object.\n\n"
+)
+
+_GUARDRAIL_SCORING_RULES = (
+    "## Scoring Rules\n\n"
+    "- severity_score: integer 0-100. 0 = no issues, 100 = critical violation.\n"
+    "- passed: true if severity_score <= 50, false otherwise.\n"
+    "- If no issues found, set severity_score to 0, passed to true, "
+    "explanation to a brief positive note, and remediation to null.\n"
+    "- If issues found, provide a clear explanation and a **concrete, actionable** remediation. "
+    "Make every remediation detailed enough for an automated agent to apply the fix without ambiguity.\n\n"
+)
+
+_GUARDRAIL_JSON_SCHEMA = (
+    "## Required JSON Schema\n\n"
+    "Return a single JSON object (NOT wrapped in an array or parent object):\n\n"
+    "{\n"
+    '  "name": "<category_name>",\n'
+    '  "label": "<Category Label>",\n'
+    '  "passed": bool,\n'
+    '  "severity_score": int,\n'
+    '  "explanation": "...",\n'
+    '  "remediation": "..." or null\n'
+    "}\n\n"
+    "Return ONLY the JSON object. No other text."
+)
+
+
+# ── Per-category system prompts ───────────────────────────────────────────────
+
+GUARDRAIL_PROMPT_PROFESSIONAL_TONE = (
+    _GUARDRAIL_PREAMBLE
+    + "## Category: professional_tone (Professional Tone)\n\n"
+    "Check for proper grammar, readability, professional language. "
+    "Flag manipulative, overly casual, or unprofessional language. "
+    "Real estate emails should be warm but professional.\n\n"
+    "For tone issues, quote the problematic phrase and suggest specific rephrasing.\n\n"
+    + _GUARDRAIL_SCORING_RULES
+    + _GUARDRAIL_JSON_SCHEMA
+)
+
+GUARDRAIL_PROMPT_TOXICITY = (
+    _GUARDRAIL_PREAMBLE
+    + "## Category: toxicity (Toxicity & Offensive Content)\n\n"
+    "Check for hate speech, threats, harassment, discrimination, sexual content, "
+    "or any offensive material.\n\n"
+    + _GUARDRAIL_SCORING_RULES
+    + _GUARDRAIL_JSON_SCHEMA
+)
+
+GUARDRAIL_PROMPT_PII = (
+    _GUARDRAIL_PREAMBLE
+    + "## Category: pii (PII & Sensitive Data)\n\n"
+    "Check for Social Security numbers (XXX-XX-XXXX patterns), "
+    "email addresses of recipients, phone numbers of recipients, "
+    "banking/financial account details, passwords, or personal home addresses. "
+    "IMPORTANT: Property addresses being promoted in the email are acceptable and should NOT be flagged. "
+    "IMPORTANT: Bracketed placeholder tokens such as [email], [phone], [ssn], [address], [credit card], "
+    "[name], or similar (e.g. [Email], [PHONE]) represent masked or redacted data — the actual sensitive "
+    "values are NOT exposed. These placeholders must NOT be flagged as PII violations.\n\n"
+    "For PII violations, specify the exact text to redact and the placeholder to use "
+    "(e.g., 'replace john@example.com with [email]', 'replace 555-123-4567 with [phone]').\n\n"
+    + _GUARDRAIL_SCORING_RULES
+    + _GUARDRAIL_JSON_SCHEMA
+)
+
+GUARDRAIL_PROMPT_BIAS = (
+    _GUARDRAIL_PREAMBLE
+    + "## Category: bias (Bias & Fairness)\n\n"
+    "Check for discriminatory language regarding race, gender, age, religion, disability, "
+    "familial status, or national origin. Check for Fair Housing Act violations. "
+    "Real estate emails must comply with fair housing regulations.\n\n"
+    "For bias, quote the problematic text and suggest a neutral alternative.\n\n"
+    + _GUARDRAIL_SCORING_RULES
+    + _GUARDRAIL_JSON_SCHEMA
+)
+
+
+# ── Lookup structures ─────────────────────────────────────────────────────────
+
+GUARDRAIL_CATEGORY_ORDER: list[str] = [
+    "professional_tone",
+    "toxicity",
+    "pii",
+    "bias",
+]
+
+GUARDRAIL_CATEGORY_PROMPTS: dict[str, str] = {
+    "professional_tone": GUARDRAIL_PROMPT_PROFESSIONAL_TONE,
+    "toxicity": GUARDRAIL_PROMPT_TOXICITY,
+    "pii": GUARDRAIL_PROMPT_PII,
+    "bias": GUARDRAIL_PROMPT_BIAS,
+}

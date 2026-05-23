@@ -4,6 +4,8 @@ An AI-powered real estate campaign tool that generates personalized emails promo
 
 ![Pipeline Flow](pipeline_flow.png)
 
+![Email Validation Flow](email_validation_flow.png)
+
 ---
 
 ## How It Works
@@ -26,7 +28,7 @@ An AI-powered real estate campaign tool that generates personalized emails promo
 4. Preview the email (HTML or plain text), click property links to see detail modals
 5. **Edit** the plain text directly or use **Refine with AI** to modify the email via an LLM prompt
 6. Click **Save Email** to save a draft — drafts accumulate, and the "Email saved on" timestamp always updates to the latest save time
-7. Click **Validate & Send** — runs guardrail validation (professional tone, toxicity, PII, bias) via Claude. A 2x2 card grid shows severity scores for each category
+7. Click **Validate & Send** — runs guardrail validation across 4 categories (professional tone, toxicity, PII, bias) using **per-category configurable LLM models** (e.g., Opus for PII, GPT for tone). All 4 calls run concurrently via `asyncio.gather`. A 2x2 card grid shows severity scores for each category
 8. If all checks pass (severity ≤ 50, aggregate ≤ 50), click **Confirm & Send** to persist and track the campaign; if viewing a saved draft, that draft is marked as sent
 9. If validation fails, click **Auto-Fix with AI** — the LLM rewrites the email to address flagged issues, then re-validate
 10. **Delete** saved drafts via the Delete button with confirmation dialog — also clears the "Email saved on" banner from property cards
@@ -47,8 +49,12 @@ Browser → FastAPI (port 8000) → serves frontend/dist/ (static) + REST API (/
                    LangGraph     Lakebase     Genie Spaces
                    StateGraph   (PostgreSQL)  (NL queries)
                       │
-                      ▼
-                  Claude LLM
+               ┌──────┴──────┐
+               ▼              ▼
+          Claude LLM    Guardrail Models
+       (email gen,      (per-category,
+        refine, fix)     configurable via
+                         GUARDRAIL_MODELS)
 ```
 
 **Single-process deployment:** FastAPI on port 8000 serves both the pre-built React frontend (from `frontend/dist/`) and all API endpoints. Databricks Apps only exposes port 8000.
@@ -92,7 +98,7 @@ All endpoints are prefixed with `/api/campaign`.
 | `POST` | `/save-draft` | Save draft — accumulates, updates tracking timestamp |
 | `POST` | `/delete-saved-email` | Soft-delete a saved email + clear campaign tracking |
 | `POST` | `/refine-email` | Refine email subject + plain text via LLM |
-| `POST` | `/validate-email` | Guardrail validation — scores tone, toxicity, PII, bias |
+| `POST` | `/validate-email` | Guardrail validation — 4 concurrent per-category LLM calls (configurable models) |
 | `POST` | `/fix-email` | Auto-fix email to address failed guardrail categories via LLM |
 | `POST` | `/properties/batch` | Full details for multiple properties by ID (max 100) |
 
@@ -129,8 +135,8 @@ agent_server/
   tools.py             # Lakebase helper (psycopg2 + connection pooling)
   prompts.py           # LLM prompt templates
   refine_email_prompts.py  # Refine with AI prompt
-  guardrail_prompts.py # Guardrail validation prompt
-  config.py            # Configuration constants
+  guardrail_prompts.py # Guardrail validation prompts (monolithic + per-category)
+  config.py            # Configuration constants + GUARDRAIL_MODELS
   start_server.py      # FastAPI entry point + lifespan hooks
 frontend/
   src/
@@ -221,7 +227,8 @@ databricks apps logs xome-lakebase-campaign-genie --profile fevm
 | Workspace | fevm (`https://fevm-serverless-stable-14ey07.cloud.databricks.com`) |
 | App URL | `https://xome-lakebase-campaign-genie-7474645414452466.aws.databricksapps.com` |
 | Genie Space ID | `01f1484fd22e1d558c5ed706de7b522d` |
-| LLM Endpoint | `databricks-claude-sonnet-4-6` |
+| LLM Endpoint | `databricks-claude-sonnet-4-6` (default) |
+| Guardrail Models | Per-category — see `GUARDRAIL_MODELS` in `config.py` |
 | Database | Lakebase (Managed PostgreSQL) |
 | Tracing | MLflow (`/Shared/xome-lakebase-campaign-tracing`) |
 

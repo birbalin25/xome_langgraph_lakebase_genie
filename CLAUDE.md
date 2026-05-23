@@ -44,8 +44,12 @@ Browser → FastAPI (port 8000) → serves frontend/dist/ (static) + REST API (/
                    LangGraph     Lakebase     Genie Spaces
                    StateGraph   (PostgreSQL)  (NL queries)
                       │
-                      ▼
-                  Claude LLM
+               ┌──────┴──────┐
+               ▼              ▼
+          Claude LLM    Guardrail Models
+       (email gen,      (per-category,
+        refine, fix)     configurable via
+                         GUARDRAIL_MODELS)
 ```
 
 **Single-process deployment:** FastAPI on port 8000 serves both the pre-built React frontend (from `frontend/dist/`) and all API endpoints. Databricks Apps only exposes port 8000.
@@ -92,7 +96,7 @@ Browser → FastAPI (port 8000) → serves frontend/dist/ (static) + REST API (/
 - *Genie output:* `genie_raw_result` (`{columns, rows, description, sql}`), `genie_conversation_id_out`, `genie_message_id`
 - *Output:* `generated_email` (`{subject, html, plain_text, raw}`), `error`
 
-**`_SanitizedChatDatabricks`** — Subclass in `agent.py` that strips `id` keys from tool message content blocks before sending to the Foundation Model API. Some LLM endpoints reject the extra `id` field that LangChain adds to content blocks.
+**`_SanitizedChatDatabricks`** — Subclass in `agent.py` that strips `id` keys from tool message content blocks before sending to the Foundation Model API. Some LLM endpoints reject the extra `id` field that LangChain adds to content blocks. `get_llm(endpoint=...)` accepts an optional endpoint parameter to route to different models; callers with no args default to `LLM_ENDPOINT`.
 
 **Email parsing** — `email_generator.py` uses regex (not JSON) to extract `SUBJECT:`, `HTML:`, and `PLAIN TEXT:` sections from raw LLM output. The prompt instructs the LLM to output in this delimited format.
 
@@ -122,7 +126,7 @@ Browser → FastAPI (port 8000) → serves frontend/dist/ (static) + REST API (/
 
 **Refine with AI** — In the plain text editor, users can click "Refine with AI" to open a prompt bar. The prompt + current email text are sent to the LLM via `/refine-email`, which returns an updated subject and plain text. Previous email context is included for continuity.
 
-**Guardrail validation** — Before sending an email, the "Validate & Send" flow calls `/api/campaign/validate-email`, which sends the subject + plain text to the LLM with a compliance prompt (`guardrail_prompts.py`). The LLM scores four categories (professional tone, toxicity, PII, bias) as JSON. The frontend `GuardrailValidation.tsx` renders a 2x2 card grid with severity scores. If all categories pass (severity ≤ 50) and aggregate score ≤ 50, a "Confirm & Send" button appears. Content changes after validation show a re-validate warning. Parse failures from the LLM return a failsafe response with `parse_error: true`.
+**Per-category guardrail validation** — Before sending an email, the "Validate & Send" flow calls `/api/campaign/validate-email`, which launches 4 independent LLM calls concurrently via `asyncio.gather` — one per category (professional tone, toxicity, PII, bias). Each category uses a separately configurable model endpoint defined in `GUARDRAIL_MODELS` (in `config.py`). Per-category system prompts live in `guardrail_prompts.py` (`GUARDRAIL_CATEGORY_PROMPTS` dict). The `_validate_single_category()` helper in `campaign_api.py` calls the category-specific model, parses JSON, normalizes fields, and returns a failsafe on error. Results are merged server-side: `aggregate_score` (equal-weight average), `overall_passed`, and `summary` are computed in the endpoint. The frontend `GuardrailValidation.tsx` renders a 2x2 card grid with severity scores. If all categories pass (severity ≤ 50) and aggregate score ≤ 50, a "Confirm & Send" button appears. Content changes after validation show a re-validate warning. Graceful degradation: if one category's LLM fails, `parse_error: true` is set but other categories still show real results (vs. previous all-or-nothing failsafe).
 
 **Auto-Fix with AI** — When guardrail validation fails, an "Auto-Fix with AI" button appears. It calls `/api/campaign/fix-email` with the current email and the failed categories (name, label, explanation, remediation). The backend feeds these into the refine prompt, and the LLM rewrites the email to address all flagged issues. The fixed email replaces the editor content for re-validation.
 
@@ -161,7 +165,7 @@ Six tables in Lakebase (PostgreSQL). First four seeded by notebooks, last two au
 | `POST` | `/api/campaign/save-draft` | Save draft — persists without marking as sent |
 | `POST` | `/api/campaign/delete-saved-email` | Soft-delete a saved email |
 | `POST` | `/api/campaign/refine-email` | Refine email subject + plain text via LLM |
-| `POST` | `/api/campaign/validate-email` | Guardrail validation — scores tone, toxicity, PII, bias |
+| `POST` | `/api/campaign/validate-email` | Guardrail validation — 4 concurrent per-category LLM calls (configurable models) |
 | `POST` | `/api/campaign/fix-email` | Auto-fix email to address failed guardrail categories via LLM |
 | `POST` | `/api/campaign/properties/batch` | Full details for multiple properties by ID (max 100) |
 
@@ -170,4 +174,5 @@ Six tables in Lakebase (PostgreSQL). First four seeded by notebooks, last two au
 - Workspace: fevm (`https://fevm-serverless-stable-14ey07.cloud.databricks.com`)
 - App URL: `https://xome-lakebase-campaign-genie-7474645414452466.aws.databricksapps.com`
 - Genie Space ID: `01f1484fd22e1d558c5ed706de7b522d`
+- Guardrail models: `GUARDRAIL_MODELS` dict in `config.py` — maps each category to a model endpoint (e.g., `"pii": "databricks-claude-opus-4-6"`)
 - All other config values (catalog, schema, Lakebase DNS, LLM endpoint, etc.) are in `agent_server/config.py`.

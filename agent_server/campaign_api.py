@@ -1,5 +1,6 @@
 """REST API router for the campaign dashboard UI."""
 
+import asyncio
 import json
 import logging
 import re
@@ -9,9 +10,11 @@ from fastapi import APIRouter, HTTPException
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
 
+from agent_server.config import GUARDRAIL_MODELS, LLM_ENDPOINT
 from agent_server.guardrail_prompts import (
+    GUARDRAIL_CATEGORY_ORDER,
+    GUARDRAIL_CATEGORY_PROMPTS,
     GUARDRAIL_HUMAN_TEMPLATE,
-    GUARDRAIL_SYSTEM_PROMPT,
 )
 from agent_server.refine_email_prompts import REFINE_EMAIL_SYSTEM_PROMPT
 from agent_server.tools import _execute_sql
@@ -525,33 +528,38 @@ async def refine_email(req: RefineEmailRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/validate-email")
-async def validate_email(req: ValidateEmailRequest):
-    """Validate an email against guardrail categories using LLM."""
+_CATEGORY_LABELS: dict[str, str] = {
+    "professional_tone": "Professional Tone",
+    "toxicity": "Toxicity & Offensive Content",
+    "pii": "PII & Sensitive Data",
+    "bias": "Bias & Fairness",
+}
+
+_CATEGORY_FAILSAFE: dict[str, dict] = {
+    cat: {
+        "name": cat,
+        "label": _CATEGORY_LABELS[cat],
+        "passed": False,
+        "severity_score": 0,
+        "explanation": "Validation could not be completed.",
+        "remediation": "Please retry.",
+    }
+    for cat in GUARDRAIL_CATEGORY_ORDER
+}
+
+
+async def _validate_single_category(category: str, human_message: str) -> dict:
+    """Run guardrail validation for a single category using its configured model."""
     from agent_server.agent import get_llm
 
-    _FAILSAFE = {
-        "categories": [
-            {"name": "professional_tone", "label": "Professional Tone", "passed": False, "severity_score": 0, "explanation": "Validation could not be completed.", "remediation": "Please retry."},
-            {"name": "toxicity", "label": "Toxicity & Offensive Content", "passed": False, "severity_score": 0, "explanation": "Validation could not be completed.", "remediation": "Please retry."},
-            {"name": "pii", "label": "PII & Sensitive Data", "passed": False, "severity_score": 0, "explanation": "Validation could not be completed.", "remediation": "Please retry."},
-            {"name": "bias", "label": "Bias & Fairness", "passed": False, "severity_score": 0, "explanation": "Validation could not be completed.", "remediation": "Please retry."},
-        ],
-        "aggregate_score": 0,
-        "overall_passed": False,
-        "summary": "Validation could not be completed — please retry.",
-        "parse_error": True,
-    }
-
-    human = GUARDRAIL_HUMAN_TEMPLATE.format(
-        subject=req.subject, plain_text=req.plain_text
-    )
+    prompt = GUARDRAIL_CATEGORY_PROMPTS[category]
+    endpoint = GUARDRAIL_MODELS.get(category, LLM_ENDPOINT)
 
     try:
-        llm = get_llm()
+        llm = get_llm(endpoint=endpoint)
         response = await llm.ainvoke([
-            SystemMessage(content=GUARDRAIL_SYSTEM_PROMPT),
-            HumanMessage(content=human),
+            SystemMessage(content=prompt),
+            HumanMessage(content=human_message),
         ])
         raw = response.content
 
@@ -560,10 +568,74 @@ async def validate_email(req: ValidateEmailRequest):
         cleaned = re.sub(r"\s*```$", "", cleaned.strip())
 
         result = json.loads(cleaned)
+
+        # Defensive unwrap: if the LLM returned a wrapper like {"categories": [...]}
+        if "categories" in result and isinstance(result["categories"], list):
+            result = result["categories"][0] if result["categories"] else {}
+
+        # Normalize required fields
+        result.setdefault("name", category)
+        result.setdefault("label", _CATEGORY_LABELS[category])
+        result.setdefault("severity_score", 0)
+        result.setdefault("passed", result["severity_score"] <= 50)
+        result.setdefault("explanation", "")
+        result.setdefault("remediation", None)
+        # Force correct name/label in case the LLM hallucinated different values
+        result["name"] = category
+        result["label"] = _CATEGORY_LABELS[category]
+
         return result
     except json.JSONDecodeError:
-        logger.warning("Guardrail LLM returned non-JSON response: %s", raw[:500])
-        return _FAILSAFE
+        logger.warning(
+            "Guardrail LLM (%s, %s) returned non-JSON: %s",
+            category, endpoint, raw[:300],
+        )
+        return {**_CATEGORY_FAILSAFE[category], "_parse_error": True}
+    except Exception:
+        logger.exception("Guardrail validation failed for %s (%s)", category, endpoint)
+        return {**_CATEGORY_FAILSAFE[category], "_parse_error": True}
+
+
+@router.post("/validate-email")
+async def validate_email(req: ValidateEmailRequest):
+    """Validate an email against guardrail categories using per-category LLM calls."""
+    human = GUARDRAIL_HUMAN_TEMPLATE.format(
+        subject=req.subject, plain_text=req.plain_text
+    )
+
+    try:
+        # Launch all 4 category validations concurrently
+        tasks = [
+            _validate_single_category(cat, human)
+            for cat in GUARDRAIL_CATEGORY_ORDER
+        ]
+        results = await asyncio.gather(*tasks)
+
+        # Check if any category had a parse error
+        has_parse_error = any(r.pop("_parse_error", False) for r in results)
+
+        # Compute aggregate score and overall pass/fail
+        scores = [r["severity_score"] for r in results]
+        aggregate_score = round(sum(scores) / len(scores)) if scores else 0
+        overall_passed = all(r["passed"] for r in results) and aggregate_score <= 50
+
+        # Generate summary
+        failed = [r["label"] for r in results if not r["passed"]]
+        if not failed:
+            summary = "All guardrail checks passed — email is compliant."
+        else:
+            summary = f"Issues found in: {', '.join(failed)}."
+
+        response = {
+            "categories": results,
+            "aggregate_score": aggregate_score,
+            "overall_passed": overall_passed,
+            "summary": summary,
+        }
+        if has_parse_error:
+            response["parse_error"] = True
+
+        return response
     except Exception as e:
         logger.exception("Failed to validate email")
         raise HTTPException(status_code=500, detail=str(e))

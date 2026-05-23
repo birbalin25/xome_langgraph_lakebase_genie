@@ -12,6 +12,17 @@ LAKEBASE_SCHEMA = "xome"
 
 GENIE_SPACE_ID = "01f1484fd22e1d558c5ed706de7b522d"
 
+# Per-category model endpoints for guardrail validation.
+# Change any value to route that category to a different LLM.
+# The endpoint must support the Chat Completions API (used by ChatDatabricks).
+# Missing keys fall back to LLM_ENDPOINT.
+GUARDRAIL_MODELS: dict[str, str] = {
+    "professional_tone": LLM_ENDPOINT,
+    "toxicity": LLM_ENDPOINT,
+    "pii": LLM_ENDPOINT,
+    "bias": LLM_ENDPOINT,
+}
+
 METROS = {
     "Austin": {"state": "TX", "base_price": 450000},
     "Boston": {"state": "MA", "base_price": 650000},

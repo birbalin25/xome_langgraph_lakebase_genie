@@ -45,6 +45,10 @@ flowchart TD
             A8["POST /delete-saved-email<br/>Soft-delete draft"]:::api
             A9["POST /refine-email<br/>AI refinement"]:::api
         end
+        subgraph GUARD_EP["Guardrail Validation"]
+            VA["POST /validate-email<br/>4 concurrent per-category<br/>LLM calls via asyncio.gather"]:::api
+            FX["POST /fix-email<br/>Auto-fix flagged categories"]:::api
+        end
     end
 
     %% ── LangGraph + Data + LLM ──
@@ -81,7 +85,15 @@ flowchart TD
         end
 
         GENIE_API["Genie Spaces API<br/>Space: 01f148...<br/>NL → SQL → Results"]:::ext
-        LLM["Claude Sonnet 4.6<br/>Foundation Model API"]:::llm
+        LLM["Claude Sonnet 4.6<br/>Foundation Model API<br/>(email gen, refine, fix)"]:::llm
+
+        subgraph GUARD_LLM["Guardrail Models — per-category (config.py)"]
+            direction TB
+            GM1["professional_tone<br/>GPT 5.5 Pro"]:::llm
+            GM2["toxicity<br/>Claude Sonnet 4.6"]:::llm
+            GM3["pii<br/>Claude Opus 4.6"]:::llm
+            GM4["bias<br/>Claude Sonnet 4.6"]:::llm
+        end
 
         subgraph LB_DB["Lakebase — Managed PostgreSQL"]
             direction TB
@@ -123,6 +135,10 @@ flowchart TD
     O1 -->|"save draft"| A7
     O1 -->|"delete"| A8
     O1 -->|"refine"| A9
+    O1 -->|"validate"| VA
+    O1 -->|"auto-fix"| FX
+    VA -->|"concurrent calls"| GUARD_LLM
+    FX --> LLM
     A5 -->|"track sent"| T5
     A5 -->|"store email"| T6
     A7 -->|"track saved"| T5

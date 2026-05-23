@@ -32,6 +32,10 @@ class _SanitizedChatDatabricks(ChatDatabricks):
             yield chunk
 
 
-def get_llm():
-    """Return a sanitized ChatDatabricks LLM instance."""
-    return _SanitizedChatDatabricks(endpoint=LLM_ENDPOINT)
+def get_llm(endpoint: str | None = None):
+    """Return a sanitized ChatDatabricks LLM instance.
+
+    Args:
+        endpoint: Model serving endpoint name. Defaults to LLM_ENDPOINT.
+    """
+    return _SanitizedChatDatabricks(endpoint=endpoint or LLM_ENDPOINT)
